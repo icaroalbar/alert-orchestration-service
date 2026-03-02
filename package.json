@@ -9,21 +9,25 @@
     "npm": ">=10"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "lint": "node --eval \"console.log('Lint será configurado na issue #19.')\"",
-    "test": "node --test",
-    "test:coverage": "node --test --experimental-test-coverage",
+    "test": "node --import tsx --test $(find tests -name '*.test.ts' -print)",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage $(find tests -name '*.test.ts' -print)",
     "package": "npm run sls:package:dev",
     "sls:print:dev": "serverless print --stage dev",
     "sls:print:stg": "serverless print --stage stg",
     "sls:print:prod": "serverless print --stage prod",
-    "sls:package:dev": "serverless package --stage dev",
-    "sls:package:stg": "serverless package --stage stg",
-    "sls:package:prod": "serverless package --stage prod",
-    "typecheck": "node --eval \"console.log('Typecheck será configurado em issue dedicada.')\"",
+    "sls:package:dev": "npm run build && serverless package --stage dev",
+    "sls:package:stg": "npm run build && serverless package --stage stg",
+    "sls:package:prod": "npm run build && serverless package --stage prod",
+    "typecheck": "tsc --noEmit",
     "validate:drift": "npm ci --ignore-scripts --prefer-offline"
   },
   "devDependencies": {
+    "@types/node": "^20.17.50",
     "serverless": "^4.33.0",
-    "serverless-step-functions": "^3.23.4"
+    "serverless-step-functions": "^3.23.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
   }
 }

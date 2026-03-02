@@ -1,9 +1,7 @@
-'use strict';
+import assert from 'node:assert/strict';
+import test from 'node:test';
 
-const test = require('node:test');
-const assert = require('node:assert/strict');
-
-const { handler } = require('../../../src/handlers/scheduler');
+import { handler } from '../../../src/handlers/scheduler';
 
 test('scheduler handler returns expected payload', async () => {
   const result = await handler();

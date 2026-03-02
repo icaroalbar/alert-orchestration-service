@@ -1,6 +1,6 @@
 name: Feature
 description: Nova funcionalidade
-title: "[FEATURE] "
+title: '[FEATURE] '
 labels: []
 body:
   - type: textarea

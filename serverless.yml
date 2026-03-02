@@ -14,6 +14,8 @@ provider:
     SERVICE_NAME: ${self:service}
     SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}
     CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
+    CLIENT_EVENTS_TOPIC_ARN:
+      Ref: ClientEventsTopic
   stackTags:
     Service: ${self:service}
     Stage: ${self:provider.stage}
@@ -29,18 +31,21 @@ custom:
       tracing: false
       sourcesTableName: ${self:service}-dev-sources
       cursorsTableName: ${self:service}-dev-cursors
+      clientEventsTopicName: ${self:service}-dev-client-events
     stg:
       region: us-east-1
       logRetentionInDays: 14
       tracing: true
       sourcesTableName: ${self:service}-stg-sources
       cursorsTableName: ${self:service}-stg-cursors
+      clientEventsTopicName: ${self:service}-stg-client-events
     prod:
       region: us-east-1
       logRetentionInDays: 30
       tracing: true
       sourcesTableName: ${self:service}-prod-sources
       cursorsTableName: ${self:service}-prod-cursors
+      clientEventsTopicName: ${self:service}-prod-client-events
 
 plugins:
   - serverless-step-functions
@@ -108,3 +113,40 @@ resources:
             KeyType: HASH
         SSESpecification:
           SSEEnabled: true
+    ClientEventsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.stages.${self:provider.stage}.clientEventsTopicName}
+        KmsMasterKeyId: alias/aws/sns
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+    CollectorPublishPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:custom.naming.prefix}-collector-sns-publish
+        Description: Permissoes de publicacao no topico SNS para a coletora.
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: PublishClientEvents
+              Effect: Allow
+              Action:
+                - sns:Publish
+              Resource:
+                Ref: ClientEventsTopic
+  Outputs:
+    ClientEventsTopicArn:
+      Description: ARN do topico SNS de eventos de clientes.
+      Value:
+        Ref: ClientEventsTopic
+      Export:
+        Name: ${self:custom.naming.prefix}-client-events-topic-arn
+    CollectorPublishPolicyArn:
+      Description: ARN da policy de publicacao SNS para a Lambda coletora.
+      Value:
+        Ref: CollectorPublishPolicy
+      Export:
+        Name: ${self:custom.naming.prefix}-collector-publish-policy-arn

@@ -60,7 +60,7 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Prefixo de recursos: `${service}-${stage}`.
 - Configurações por ambiente ficam em `custom.stages.dev|stg|prod`.
 
-### Recursos base de dados (DynamoDB)
+### Recursos base de dados e eventos (DynamoDB + SNS)
 
 - Tabela `sources` provisionada por IaC com nome `${service}-${stage}-sources`.
 - Chave primária: `sourceId` (HASH).
@@ -70,6 +70,10 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Tabela `cursors` provisionada por IaC com nome `${service}-${stage}-cursors`.
 - Chave primária: `source` (HASH), voltada para leitura e update incremental por fonte.
 - Criptografia padrão DynamoDB habilitada (`SSEEnabled: true`).
+- Tópico SNS `client-events` por stage: `${service}-${stage}-client-events`.
+- Criptografia em repouso do tópico SNS via `KmsMasterKeyId: alias/aws/sns`.
+- ARN do tópico exposto por output/export e variável de ambiente `CLIENT_EVENTS_TOPIC_ARN`.
+- Policy gerenciada dedicada (`collector-sns-publish`) para publicação da coletora com escopo mínimo em `sns:Publish` no tópico.
 
 ### Validação por stage
 

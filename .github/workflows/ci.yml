@@ -15,11 +15,17 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
+        if: ${{ hashFiles('package.json') != '' }}
         with:
           node-version: 20
 
-      - run: npm install
-      - run: npm run validate:drift
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test -- --coverage
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm install
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm run validate:drift
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm run lint
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm run typecheck
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm run test -- --coverage

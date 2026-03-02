@@ -13,6 +13,7 @@ provider:
     STAGE: ${self:provider.stage}
     SERVICE_NAME: ${self:service}
     SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}
+    CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
   stackTags:
     Service: ${self:service}
     Stage: ${self:provider.stage}
@@ -27,16 +28,19 @@ custom:
       logRetentionInDays: 7
       tracing: false
       sourcesTableName: ${self:service}-dev-sources
+      cursorsTableName: ${self:service}-dev-cursors
     stg:
       region: us-east-1
       logRetentionInDays: 14
       tracing: true
       sourcesTableName: ${self:service}-stg-sources
+      cursorsTableName: ${self:service}-stg-cursors
     prod:
       region: us-east-1
       logRetentionInDays: 30
       tracing: true
       sourcesTableName: ${self:service}-prod-sources
+      cursorsTableName: ${self:service}-prod-cursors
 
 plugins:
   - serverless-step-functions
@@ -91,3 +95,16 @@ resources:
         TimeToLiveSpecification:
           AttributeName: expiresAt
           Enabled: true
+    CursorsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: source
+            AttributeType: S
+        KeySchema:
+          - AttributeName: source
+            KeyType: HASH
+        SSESpecification:
+          SSEEnabled: true

@@ -67,6 +67,9 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - GSI operacional: `active-nextRunAt-index` (`active` + `nextRunAt`) para consultas do scheduler.
 - TTL habilitado em `expiresAt`.
 - Billing mode: `PAY_PER_REQUEST`.
+- Tabela `cursors` provisionada por IaC com nome `${service}-${stage}-cursors`.
+- Chave primária: `source` (HASH), voltada para leitura e update incremental por fonte.
+- Criptografia padrão DynamoDB habilitada (`SSEEnabled: true`).
 
 ### Validação por stage
 

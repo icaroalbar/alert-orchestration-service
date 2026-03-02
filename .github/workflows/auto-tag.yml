@@ -1,0 +1,51 @@
+name: Auto Tag
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Create Semantic Tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute and create next tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          release_branches: main
+          default_bump: false
+          fetch_all_tags: true
+          create_annotated_tag: true
+          tag_prefix: v
+
+      - name: Job summary
+        run: |
+          echo "previous_tag=${{ steps.tag_version.outputs.previous_tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "new_tag=${{ steps.tag_version.outputs.new_tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "release_type=${{ steps.tag_version.outputs.release_type }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub release
+        if: ${{ steps.tag_version.outputs.new_tag != '' }}
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          body: ${{ steps.tag_version.outputs.changelog }}
+          generateReleaseNotes: false

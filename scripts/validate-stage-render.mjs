@@ -24,7 +24,22 @@ const staticFallback = () => {
     'region: ${self:custom.stages.${self:provider.stage}.region}',
     'logRetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}',
     'lambda: ${self:custom.stages.${self:provider.stage}.tracing}',
+    'SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}',
+    'CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}',
     'name: ${self:custom.naming.prefix}-orchestration',
+    'sourcesTableName: ${self:service}-dev-sources',
+    'sourcesTableName: ${self:service}-stg-sources',
+    'sourcesTableName: ${self:service}-prod-sources',
+    'cursorsTableName: ${self:service}-dev-cursors',
+    'cursorsTableName: ${self:service}-stg-cursors',
+    'cursorsTableName: ${self:service}-prod-cursors',
+    'SourcesTable:',
+    'CursorsTable:',
+    'BillingMode: PAY_PER_REQUEST',
+    'IndexName: active-nextRunAt-index',
+    'AttributeName: expiresAt',
+    'AttributeName: source',
+    'SSEEnabled: true',
     'dev:',
     'stg:',
     'prod:',
@@ -40,7 +55,7 @@ const staticFallback = () => {
   }
 
   console.warn(
-    '\nAviso: renderização multi-stage indisponível por rede. Fallback estático no serverless.yml concluído.'
+    '\nAviso: renderização multi-stage indisponível por rede. Fallback estático no serverless.yml concluído.',
   );
 };
 

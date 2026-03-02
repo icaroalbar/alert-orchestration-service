@@ -60,6 +60,17 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Prefixo de recursos: `${service}-${stage}`.
 - Configurações por ambiente ficam em `custom.stages.dev|stg|prod`.
 
+### Recursos base de dados (DynamoDB)
+
+- Tabela `sources` provisionada por IaC com nome `${service}-${stage}-sources`.
+- Chave primária: `sourceId` (HASH).
+- GSI operacional: `active-nextRunAt-index` (`active` + `nextRunAt`) para consultas do scheduler.
+- TTL habilitado em `expiresAt`.
+- Billing mode: `PAY_PER_REQUEST`.
+- Tabela `cursors` provisionada por IaC com nome `${service}-${stage}-cursors`.
+- Chave primária: `source` (HASH), voltada para leitura e update incremental por fonte.
+- Criptografia padrão DynamoDB habilitada (`SSEEnabled: true`).
+
 ### Validação por stage
 
 Renderização do template por stage:

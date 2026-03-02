@@ -1,7 +1,7 @@
 name: 🐛 Bugfix
 description: Correção com BDD
-title: "fix: "
-labels: ["bug"]
+title: 'fix: '
+labels: ['bug']
 
 body:
   - type: textarea

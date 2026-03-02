@@ -1,0 +1,5 @@
+dist
+.serverless
+coverage
+node_modules
+.codex/runs

@@ -4,12 +4,10 @@ export interface InMemorySource {
   sourceId: string;
 }
 
-export function createInMemorySourceRepository(
-  seed: InMemorySource[] = []
-): SourceRepository {
+export function createInMemorySourceRepository(seed: InMemorySource[] = []): SourceRepository {
   return {
-    async listEligibleSourceIds(): Promise<string[]> {
-      return seed.map((source) => source.sourceId);
-    }
+    listEligibleSourceIds(): Promise<string[]> {
+      return Promise.resolve(seed.map((source) => source.sourceId));
+    },
   };
 }

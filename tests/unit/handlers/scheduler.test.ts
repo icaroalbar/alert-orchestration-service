@@ -1,12 +1,13 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { describe, expect, it } from '@jest/globals';
 
 import { handler } from '../../../src/handlers/scheduler';
 
-void test('scheduler handler returns expected payload', async () => {
-  const result = await handler();
+describe('scheduler handler', () => {
+  it('returns expected payload', async () => {
+    const result = await handler();
 
-  assert.deepEqual(result.sourceIds, []);
-  assert.equal(typeof result.generatedAt, 'string');
-  assert.equal(Number.isNaN(Date.parse(result.generatedAt)), false);
+    expect(result.sourceIds).toEqual([]);
+    expect(typeof result.generatedAt).toBe('string');
+    expect(Number.isNaN(Date.parse(result.generatedAt))).toBe(false);
+  });
 });

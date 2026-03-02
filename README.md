@@ -23,6 +23,7 @@ A base do serviço é **TypeScript obrigatório**.
 - `npm run format:check`
 - `npm run typecheck`
 - `npm run test`
+- `npm run test:watch`
 - `npm run test:coverage`
 - `npm run build`
 - `npm run package` (atalho para `sls:package:dev`)
@@ -41,10 +42,17 @@ npm run lint
 npm run format:check
 npm run typecheck
 npm run test
+npm run test:coverage
 npm run build
 npm run sls:print:dev
 npm run sls:package:dev
 ```
+
+## Ambiente de testes (isolado)
+
+- Runner: `Jest` com `ts-jest` e `testEnvironment: node`.
+- Testes unitários não dependem de AWS nem de credenciais externas.
+- Cobertura: `npm run test:coverage` gera relatório em `coverage/`.
 
 ## Estrutura de pastas
 

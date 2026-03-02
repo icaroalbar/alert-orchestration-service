@@ -21,9 +21,13 @@
     "sls:print:dev": "serverless print --stage dev",
     "sls:print:stg": "serverless print --stage stg",
     "sls:print:prod": "serverless print --stage prod",
+    "sls:print:all": "npm run sls:print:dev && npm run sls:print:stg && npm run sls:print:prod",
     "sls:package:dev": "npm run build && serverless package --stage dev",
     "sls:package:stg": "npm run build && serverless package --stage stg",
     "sls:package:prod": "npm run build && serverless package --stage prod",
+    "sls:package:all": "npm run sls:package:dev && npm run sls:package:stg && npm run sls:package:prod",
+    "validate:stage-render": "node ./scripts/validate-stage-render.mjs",
+    "validate:stage-package": "node ./scripts/validate-stage-package.mjs",
     "typecheck": "tsc --noEmit",
     "validate:drift": "npm ci --ignore-scripts --prefer-offline"
   },

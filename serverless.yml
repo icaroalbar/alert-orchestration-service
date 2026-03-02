@@ -18,6 +18,8 @@ provider:
     ManagedBy: serverless-framework
 
 custom:
+  naming:
+    prefix: ${self:service}-${self:provider.stage}
   stages:
     dev:
       region: us-east-1
@@ -45,7 +47,7 @@ functions:
 stepFunctions:
   stateMachines:
     main:
-      name: ${self:service}-${self:provider.stage}-orchestration
+      name: ${self:custom.naming.prefix}-orchestration
       definition:
         Comment: Orquestrador base da plataforma de ingestao.
         StartAt: Scheduler

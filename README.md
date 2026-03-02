@@ -30,9 +30,13 @@ A base do serviço é **TypeScript obrigatório**.
 - `npm run sls:print:dev`
 - `npm run sls:print:stg`
 - `npm run sls:print:prod`
+- `npm run sls:print:all`
 - `npm run sls:package:dev`
 - `npm run sls:package:stg`
 - `npm run sls:package:prod`
+- `npm run sls:package:all`
+- `npm run validate:stage-render`
+- `npm run validate:stage-package`
 
 ## Setup inicial
 
@@ -44,8 +48,40 @@ npm run typecheck
 npm run test
 npm run test:coverage
 npm run build
-npm run sls:print:dev
-npm run sls:package:dev
+npm run validate:stage-render
+npm run validate:stage-package
+```
+
+## Stages (dev/stg/prod)
+
+O `serverless.yml` usa configuração explícita por stage e naming strategy para evitar colisão entre ambientes.
+
+- Stage default: `dev` (override via `--stage`).
+- Prefixo de recursos: `${service}-${stage}`.
+- Configurações por ambiente ficam em `custom.stages.dev|stg|prod`.
+
+### Validação por stage
+
+Renderização do template por stage:
+
+```bash
+npm run validate:stage-render
+```
+
+Esse comando tenta executar `sls:print:all`; quando a API do Serverless está indisponível por rede, ele aplica fallback estático no `serverless.yml` e registra aviso.
+
+Empacotamento para os 3 ambientes:
+
+```bash
+npm run validate:stage-package
+```
+
+Esse comando tenta executar `sls:package:all`; quando credenciais AWS ou conectividade não estão disponíveis, ele faz fallback para `npm run build` e registra aviso.
+
+Empacotamento estrito (requer credenciais AWS válidas no ambiente):
+
+```bash
+npm run sls:package:all
 ```
 
 ## Ambiente de testes (isolado)

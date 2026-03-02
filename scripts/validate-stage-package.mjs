@@ -32,7 +32,7 @@ try {
   }
 
   console.warn(
-    '\nAviso: empacotamento multi-stage indisponível no ambiente atual (credenciais/rede). Executando fallback com build local.'
+    '\nAviso: empacotamento multi-stage indisponível no ambiente atual (credenciais/rede). Executando fallback com build local.',
   );
   execSync('npm run build', { stdio: 'inherit', env: process.env });
 }

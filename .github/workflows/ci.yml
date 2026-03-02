@@ -28,4 +28,4 @@ jobs:
       - if: ${{ hashFiles('package.json') != '' }}
         run: npm run typecheck
       - if: ${{ hashFiles('package.json') != '' }}
-        run: npm run test -- --coverage
+        run: npm run test:coverage

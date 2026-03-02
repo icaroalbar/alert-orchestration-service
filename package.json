@@ -11,6 +11,7 @@
   "scripts": {
     "lint": "node --eval \"console.log('Lint será configurado na issue #19.')\"",
     "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
     "package": "npm pack --dry-run",
     "typecheck": "node --eval \"console.log('Typecheck será configurado em issue dedicada.')\"",
     "validate:drift": "npm ci --ignore-scripts --prefer-offline"

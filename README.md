@@ -11,6 +11,7 @@ Plataforma serverless de ingestão multi-fonte e orquestração de eventos na AW
 
 - `npm run lint`
 - `npm run test`
+- `npm run test:coverage`
 - `npm run package`
 
 ## Setup inicial

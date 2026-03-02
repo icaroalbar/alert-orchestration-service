@@ -28,3 +28,16 @@ npm run test
 npm run sls:print:dev
 npm run sls:package:dev
 ```
+
+## Estrutura de pastas
+
+```text
+src/
+  handlers/    # Entradas Lambda
+  domain/      # Casos de uso e regras de negócio
+  infra/       # Adaptadores de infraestrutura
+  shared/      # Utilitários compartilhados
+tests/         # Testes automatizados
+```
+
+Detalhes e convenções estão em `src/README.md`.

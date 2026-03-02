@@ -13,11 +13,14 @@ A base do serviço é **TypeScript obrigatório**.
 
 - Código de aplicação deve ser criado em `.ts`.
 - `src/` não deve conter `.js` de runtime.
-- Validação mínima local: `npm run typecheck && npm run test && npm run build`.
+- Validação mínima local: `npm run lint && npm run format:check && npm run typecheck && npm run test && npm run build`.
 
 ## Scripts
 
 - `npm run lint`
+- `npm run lint:fix`
+- `npm run format`
+- `npm run format:check`
 - `npm run typecheck`
 - `npm run test`
 - `npm run test:coverage`
@@ -34,6 +37,8 @@ A base do serviço é **TypeScript obrigatório**.
 
 ```bash
 npm ci
+npm run lint
+npm run format:check
 npm run typecheck
 npm run test
 npm run build

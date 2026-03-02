@@ -15,11 +15,11 @@ export async function handler(event: SchedulerEvent = {}): Promise<SchedulerResu
   const sourceRepository = createInMemorySourceRepository();
   const sourceIds = await listEligibleSources({
     sourceRepository,
-    now: event.now
+    now: event.now,
   });
 
   return {
     sourceIds,
-    generatedAt: nowIso()
+    generatedAt: nowIso(),
   };
 }

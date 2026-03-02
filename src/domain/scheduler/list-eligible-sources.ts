@@ -13,7 +13,7 @@ export interface ListEligibleSourcesInput {
 
 export async function listEligibleSources({
   sourceRepository,
-  now
+  now,
 }: ListEligibleSourcesInput): Promise<string[]> {
   return sourceRepository.listEligibleSourceIds({ now });
 }

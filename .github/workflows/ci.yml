@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+      - main
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        if: ${{ hashFiles('package.json') != '' }}
+        with:
+          node-version: 20
+
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm install
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm run validate:drift
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm run lint
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm run typecheck
+      - if: ${{ hashFiles('package.json') != '' }}
+        run: npm run test -- --coverage

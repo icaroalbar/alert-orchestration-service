@@ -1,0 +1,17 @@
+name: Feature
+description: Nova funcionalidade
+title: "[FEATURE] "
+labels: []
+body:
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto
+  - type: textarea
+    id: objetivo
+    attributes:
+      label: Objetivo
+  - type: textarea
+    id: aceite
+    attributes:
+      label: Critérios de Aceite

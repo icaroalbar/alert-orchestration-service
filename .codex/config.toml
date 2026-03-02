@@ -1,0 +1,18 @@
+[agents.manager]
+description = "Coordena execução da plataforma."
+config_file = "manager.toml"
+
+[agents.platform_architect]
+description = "Define arquitetura técnica."
+config_file = "platform-architect.toml"
+
+[agents.worker]
+description = "Executa implementação."
+config_file = "worker.toml"
+
+[agents.qa]
+description = "Valida testes."
+config_file = "qa.toml"
+
+[agents.issue_generator]
+config_file = "issue-generator.toml"

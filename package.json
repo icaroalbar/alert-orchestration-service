@@ -12,8 +12,18 @@
     "lint": "node --eval \"console.log('Lint será configurado na issue #19.')\"",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage",
-    "package": "npm pack --dry-run",
+    "package": "npm run sls:package:dev",
+    "sls:print:dev": "serverless print --stage dev",
+    "sls:print:stg": "serverless print --stage stg",
+    "sls:print:prod": "serverless print --stage prod",
+    "sls:package:dev": "serverless package --stage dev",
+    "sls:package:stg": "serverless package --stage stg",
+    "sls:package:prod": "serverless package --stage prod",
     "typecheck": "node --eval \"console.log('Typecheck será configurado em issue dedicada.')\"",
     "validate:drift": "npm ci --ignore-scripts --prefer-offline"
+  },
+  "devDependencies": {
+    "serverless": "^4.33.0",
+    "serverless-step-functions": "^3.23.4"
   }
 }

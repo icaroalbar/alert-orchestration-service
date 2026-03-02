@@ -7,6 +7,11 @@
 - `infra` implementa acesso a serviços externos e persistência.
 - `shared` concentra utilitários reutilizáveis entre módulos.
 
+## Padrão de linguagem
+
+- O código de aplicação em `src/` deve ser TypeScript (`.ts`).
+- Tipagem estrita é mandatória (`tsconfig` com `strict: true`).
+
 ## Fluxo recomendado
 
 `handler -> domain -> infra` e `shared` pode ser usado por qualquer camada.

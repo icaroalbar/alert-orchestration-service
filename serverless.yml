@@ -37,7 +37,7 @@ plugins:
 
 functions:
   scheduler:
-    handler: src/handlers/scheduler.handler
+    handler: dist/handlers/scheduler.handler
     description: Lista fontes elegiveis para processamento incremental.
     memorySize: 256
     timeout: 30

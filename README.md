@@ -7,11 +7,21 @@ Plataforma serverless de ingestão multi-fonte e orquestração de eventos na AW
 - Node.js 20.x (LTS)
 - npm 10+
 
+## Diretriz arquitetural
+
+A base do serviço é **TypeScript obrigatório**.
+
+- Código de aplicação deve ser criado em `.ts`.
+- `src/` não deve conter `.js` de runtime.
+- Validação mínima local: `npm run typecheck && npm run test && npm run build`.
+
 ## Scripts
 
 - `npm run lint`
+- `npm run typecheck`
 - `npm run test`
 - `npm run test:coverage`
+- `npm run build`
 - `npm run package` (atalho para `sls:package:dev`)
 - `npm run sls:print:dev`
 - `npm run sls:print:stg`
@@ -24,7 +34,9 @@ Plataforma serverless de ingestão multi-fonte e orquestração de eventos na AW
 
 ```bash
 npm ci
+npm run typecheck
 npm run test
+npm run build
 npm run sls:print:dev
 npm run sls:package:dev
 ```

@@ -1,0 +1,19 @@
+name: 🐛 Bugfix
+description: Correção com BDD
+title: "fix: "
+labels: ["bug"]
+
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 🧨 Problema
+    validations:
+      required: true
+
+  - type: textarea
+    id: bdd
+    attributes:
+      label: 🧪 Cenário BDD
+    validations:
+      required: true

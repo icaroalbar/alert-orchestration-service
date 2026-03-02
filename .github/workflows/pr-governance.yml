@@ -1,0 +1,36 @@
+name: PR Governance
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR Body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const errors = [];
+
+            if (!/Closes #\d+/.test(body)) {
+              errors.push("PR deve conter Closes #<issue>.");
+            }
+
+            if (!body.includes("## 🧪 BDD")) {
+              errors.push("Seção BDD obrigatória.");
+            }
+
+            if (!body.includes("## 🔥 Tipo de Release")) {
+              errors.push("Tipo de release obrigatório.");
+            }
+
+            if (!body.includes("[x]")) {
+              errors.push("Checklist deve estar marcado.");
+            }
+
+            if (errors.length > 0) {
+              core.setFailed(errors.join("\n"));
+            }

@@ -78,11 +78,19 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Salesforce: `${service}-${stage}-salesforce-events`
   - HubSpot: `${service}-${stage}-hubspot-events`
 - Retenção de mensagens configurada explicitamente (`MessageRetentionPeriod: 1209600`), com `VisibilityTimeout: 60` e long polling (`ReceiveMessageWaitTimeSeconds: 20`).
+- DLQ dedicada por integração e por stage:
+  - Salesforce DLQ: `${service}-${stage}-salesforce-events-dlq`
+  - HubSpot DLQ: `${service}-${stage}-hubspot-events-dlq`
+- Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por integração.
 - URLs e ARNs das filas expostos por outputs/exports e variáveis de ambiente:
   - `SALESFORCE_INTEGRATION_QUEUE_URL`
   - `SALESFORCE_INTEGRATION_QUEUE_ARN`
   - `HUBSPOT_INTEGRATION_QUEUE_URL`
   - `HUBSPOT_INTEGRATION_QUEUE_ARN`
+  - `SALESFORCE_INTEGRATION_DLQ_URL`
+  - `SALESFORCE_INTEGRATION_DLQ_ARN`
+  - `HUBSPOT_INTEGRATION_DLQ_URL`
+  - `HUBSPOT_INTEGRATION_DLQ_ARN`
 
 ### Validação por stage
 

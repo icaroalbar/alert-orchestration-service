@@ -31,6 +31,15 @@ Payload esperado na execução:
 
 - Entrada: `schedulerInput.now`.
 - Ação: invoca `SchedulerLambdaFunction`.
+- Retry com backoff exponencial para falhas transitórias:
+  - Erros Lambda transitórios (`ServiceException`, `AWSLambdaException`, `SdkClientException`, `TooManyRequestsException`):
+    - `IntervalSeconds: 2`
+    - `MaxAttempts: 3`
+    - `BackoffRate: 2`
+  - `States.Timeout`:
+    - `IntervalSeconds: 5`
+    - `MaxAttempts: 2`
+    - `BackoffRate: 2`
 - Saída esperada em `schedulerResult`:
   - `sourceIds` (array de string)
   - `generatedAt` (string ISO)
@@ -40,6 +49,7 @@ Payload esperado na execução:
 
 - Entrada: `scheduler.sourceIds` e `scheduler.maxConcurrency`.
 - Ação: itera cada `sourceId` e invoca `CollectorLambdaFunction`.
+- Retry com backoff exponencial na task `InvokeCollector` com os mesmos limites do `Scheduler`.
 - Controle de paralelismo:
   - `MaxConcurrencyPath = $.scheduler.maxConcurrency`.
   - Valor configurado por stage via `MAP_MAX_CONCURRENCY`.

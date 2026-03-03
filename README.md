@@ -101,6 +101,12 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Fallback no scheduler quando ausente: `5`.
 - Definição da state machine principal versionada em `state-machines/main-orchestration-v1.asl.json`.
 - Contratos de entrada/saída por estado documentados em `docs/step-functions/main-orchestration-v1.md`.
+- Retry com backoff exponencial configurado na state machine para tasks críticas:
+  - `Scheduler` e `InvokeCollector` com tentativa para erros transitórios de Lambda:
+    - `IntervalSeconds: 2`, `MaxAttempts: 3`, `BackoffRate: 2`.
+  - Retry específico para `States.Timeout`:
+    - `IntervalSeconds: 5`, `MaxAttempts: 2`, `BackoffRate: 2`.
+  - Guardrail de resiliência: número máximo de tentativas explícito para evitar loop infinito.
 - Policy mínima nas filas de integração (`IntegrationQueuesPolicy`) permitindo apenas:
   - `Principal: sns.amazonaws.com`
   - `Action: sqs:SendMessage`

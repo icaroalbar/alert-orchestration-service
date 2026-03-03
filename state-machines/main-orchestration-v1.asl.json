@@ -29,6 +29,25 @@
       "Parameters": {
         "now.$": "$.schedulerInput.now"
       },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        },
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
       "ResultPath": "$.schedulerResult",
       "Next": "NormalizeSchedulerOutput",
       "Catch": [
@@ -73,6 +92,25 @@
               "sourceId.$": "$.sourceId",
               "meta.$": "$.meta"
             },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              },
+              {
+                "ErrorEquals": ["States.Timeout"],
+                "IntervalSeconds": 5,
+                "MaxAttempts": 2,
+                "BackoffRate": 2
+              }
+            ],
             "ResultPath": "$.collectorResult",
             "Next": "BuildItemResult"
           },

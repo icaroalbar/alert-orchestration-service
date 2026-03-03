@@ -52,6 +52,24 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(scheduler.Next).toBe('NormalizeSchedulerOutput');
     const schedulerParameters = asObject(scheduler.Parameters);
     expect(schedulerParameters['now.$']).toBe('$.schedulerInput.now');
+    const schedulerRetry = scheduler.Retry as unknown[];
+    expect(Array.isArray(schedulerRetry)).toBe(true);
+    expect(schedulerRetry).toHaveLength(2);
+    const schedulerLambdaRetry = asObject(schedulerRetry[0]);
+    expect(schedulerLambdaRetry.ErrorEquals).toEqual([
+      'Lambda.ServiceException',
+      'Lambda.AWSLambdaException',
+      'Lambda.SdkClientException',
+      'Lambda.TooManyRequestsException',
+    ]);
+    expect(schedulerLambdaRetry.IntervalSeconds).toBe(2);
+    expect(schedulerLambdaRetry.MaxAttempts).toBe(3);
+    expect(schedulerLambdaRetry.BackoffRate).toBe(2);
+    const schedulerTimeoutRetry = asObject(schedulerRetry[1]);
+    expect(schedulerTimeoutRetry.ErrorEquals).toEqual(['States.Timeout']);
+    expect(schedulerTimeoutRetry.IntervalSeconds).toBe(5);
+    expect(schedulerTimeoutRetry.MaxAttempts).toBe(2);
+    expect(schedulerTimeoutRetry.BackoffRate).toBe(2);
     const schedulerResource = asObject(scheduler.Resource);
     expect(schedulerResource['Fn::GetAtt']).toEqual(['SchedulerLambdaFunction', 'Arn']);
     const schedulerCatch = scheduler.Catch as unknown[];
@@ -97,6 +115,24 @@ describe('main-orchestration-v1.asl.json', () => {
     const invokeCollectorParameters = asObject(invokeCollector.Parameters);
     expect(invokeCollectorParameters['sourceId.$']).toBe('$.sourceId');
     expect(invokeCollectorParameters['meta.$']).toBe('$.meta');
+    const invokeCollectorRetry = invokeCollector.Retry as unknown[];
+    expect(Array.isArray(invokeCollectorRetry)).toBe(true);
+    expect(invokeCollectorRetry).toHaveLength(2);
+    const collectorLambdaRetry = asObject(invokeCollectorRetry[0]);
+    expect(collectorLambdaRetry.ErrorEquals).toEqual([
+      'Lambda.ServiceException',
+      'Lambda.AWSLambdaException',
+      'Lambda.SdkClientException',
+      'Lambda.TooManyRequestsException',
+    ]);
+    expect(collectorLambdaRetry.IntervalSeconds).toBe(2);
+    expect(collectorLambdaRetry.MaxAttempts).toBe(3);
+    expect(collectorLambdaRetry.BackoffRate).toBe(2);
+    const collectorTimeoutRetry = asObject(invokeCollectorRetry[1]);
+    expect(collectorTimeoutRetry.ErrorEquals).toEqual(['States.Timeout']);
+    expect(collectorTimeoutRetry.IntervalSeconds).toBe(5);
+    expect(collectorTimeoutRetry.MaxAttempts).toBe(2);
+    expect(collectorTimeoutRetry.BackoffRate).toBe(2);
 
     expect(buildItemResult.Type).toBe('Pass');
     expect(buildItemResult.End).toBe(true);

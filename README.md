@@ -60,7 +60,7 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Prefixo de recursos: `${service}-${stage}`.
 - Configurações por ambiente ficam em `custom.stages.dev|stg|prod`.
 
-### Recursos base de dados (DynamoDB)
+### Recursos base de dados e eventos (DynamoDB + SNS)
 
 - Tabela `sources` provisionada por IaC com nome `${service}-${stage}-sources`.
 - Chave primária: `sourceId` (HASH).
@@ -70,6 +70,66 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Tabela `cursors` provisionada por IaC com nome `${service}-${stage}-cursors`.
 - Chave primária: `source` (HASH), voltada para leitura e update incremental por fonte.
 - Criptografia padrão DynamoDB habilitada (`SSEEnabled: true`).
+- Tópico SNS `client-events` por stage: `${service}-${stage}-client-events`.
+- Criptografia em repouso do tópico SNS via `KmsMasterKeyId: alias/aws/sns`.
+- ARN do tópico exposto por output/export e variável de ambiente `CLIENT_EVENTS_TOPIC_ARN`.
+- Policy gerenciada dedicada (`collector-sns-publish`) para publicação da coletora com escopo mínimo em `sns:Publish` no tópico.
+- Filas SQS dedicadas por integração e por stage:
+  - Salesforce: `${service}-${stage}-salesforce-events`
+  - HubSpot: `${service}-${stage}-hubspot-events`
+- Retenção de mensagens configurada explicitamente (`MessageRetentionPeriod: 1209600`), com `VisibilityTimeout: 60` e long polling (`ReceiveMessageWaitTimeSeconds: 20`).
+- DLQ dedicada por integração e por stage:
+  - Salesforce DLQ: `${service}-${stage}-salesforce-events-dlq`
+  - HubSpot DLQ: `${service}-${stage}-hubspot-events-dlq`
+- Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por integração.
+- Subscription SNS -> SQS explícita para fan-out em ambas as integrações:
+  - `SalesforceIntegrationSubscription` conectando `ClientEventsTopic` em `SalesforceIntegrationQueue`.
+  - `HubspotIntegrationSubscription` conectando `ClientEventsTopic` em `HubspotIntegrationQueue`.
+- Regra global do EventBridge para disparar a Step Functions principal por stage:
+  - Nome da state machine: `${service}-${stage}-orchestration`
+  - Nome da regra: `${service}-${stage}-orchestration-schedule`
+  - Stage `dev`: `cron(0/30 * * * ? *)`
+  - Stage `stg`: `cron(0/15 * * * ? *)`
+  - Stage `prod`: `cron(0/5 * * * ? *)`
+  - Payload padrão enviado para execução: `trigger`, `source`, `stage`, `service`.
+- Definição da state machine principal versionada em `state-machines/main-orchestration-v1.asl.json`.
+- Contratos de entrada/saída por estado documentados em `docs/step-functions/main-orchestration-v1.md`.
+- Policy mínima nas filas de integração (`IntegrationQueuesPolicy`) permitindo apenas:
+  - `Principal: sns.amazonaws.com`
+  - `Action: sqs:SendMessage`
+  - `Condition: ArnEquals aws:SourceArn = ClientEventsTopic`
+- URLs e ARNs das filas expostos por outputs/exports e variáveis de ambiente:
+  - `SALESFORCE_INTEGRATION_QUEUE_URL`
+  - `SALESFORCE_INTEGRATION_QUEUE_ARN`
+  - `HUBSPOT_INTEGRATION_QUEUE_URL`
+  - `HUBSPOT_INTEGRATION_QUEUE_ARN`
+  - `SALESFORCE_INTEGRATION_DLQ_URL`
+  - `SALESFORCE_INTEGRATION_DLQ_ARN`
+  - `HUBSPOT_INTEGRATION_DLQ_URL`
+  - `HUBSPOT_INTEGRATION_DLQ_ARN`
+- ARNs das subscriptions SNS -> SQS expostos por outputs/exports:
+  - `SalesforceIntegrationSubscriptionArn`
+  - `HubspotIntegrationSubscriptionArn`
+
+### IAM mínimo por função
+
+- A Lambda `scheduler` usa role dedicada (`${service}-${stage}-scheduler-role`) com:
+  - `dynamodb:Query` apenas na tabela `sources` e no índice `active-nextRunAt-index`.
+  - `dynamodb:UpdateItem` apenas na tabela `sources`.
+  - `logs:CreateLogStream` e `logs:PutLogEvents` apenas no log group `/aws/lambda/${service}-${stage}-scheduler`.
+- A state machine principal usa role dedicada (`${service}-${stage}-state-machine-role`) com permissão apenas de `lambda:InvokeFunction` na Lambda scheduler.
+- Roles reservadas para etapas seguintes já provisionadas com escopo mínimo e recursos explícitos:
+  - `collector-role` para leitura de config (`sources`), atualização de cursor (`cursors`) e `sns:Publish` no tópico de eventos.
+  - `salesforce-consumer-role` para consumo da fila `SalesforceIntegrationQueue`.
+  - `hubspot-consumer-role` para consumo da fila `HubspotIntegrationQueue`.
+- ARNs das roles exportados via outputs para reuso em stacks/funções futuras:
+  - `SchedulerExecutionRoleArn`
+  - `MainStateMachineExecutionRoleArn`
+  - `MainStateMachineName`
+  - `MainStateMachineArn`
+  - `CollectorExecutionRoleArn`
+  - `SalesforceConsumerExecutionRoleArn`
+  - `HubspotConsumerExecutionRoleArn`
 
 ### Validação por stage
 

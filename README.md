@@ -86,7 +86,8 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - `SalesforceIntegrationSubscription` conectando `ClientEventsTopic` em `SalesforceIntegrationQueue`.
   - `HubspotIntegrationSubscription` conectando `ClientEventsTopic` em `HubspotIntegrationQueue`.
 - Regra global do EventBridge para disparar a Step Functions principal por stage:
-  - Nome: `${service}-${stage}-orchestration-schedule`
+  - Nome da state machine: `${service}-${stage}-orchestration`
+  - Nome da regra: `${service}-${stage}-orchestration-schedule`
   - Stage `dev`: `cron(0/30 * * * ? *)`
   - Stage `stg`: `cron(0/15 * * * ? *)`
   - Stage `prod`: `cron(0/5 * * * ? *)`
@@ -122,6 +123,8 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - ARNs das roles exportados via outputs para reuso em stacks/funções futuras:
   - `SchedulerExecutionRoleArn`
   - `MainStateMachineExecutionRoleArn`
+  - `MainStateMachineName`
+  - `MainStateMachineArn`
   - `CollectorExecutionRoleArn`
   - `SalesforceConsumerExecutionRoleArn`
   - `HubspotConsumerExecutionRoleArn`

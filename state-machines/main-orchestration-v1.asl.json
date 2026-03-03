@@ -30,20 +30,61 @@
         "now.$": "$.schedulerInput.now"
       },
       "ResultPath": "$.schedulerResult",
+      "Next": "NormalizeSchedulerOutput",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.schedulerError",
+          "Next": "BuildSchedulerFailureOutput"
+        }
+      ]
+    },
+    "NormalizeSchedulerOutput": {
+      "Type": "Pass",
+      "Parameters": {
+        "meta.$": "$.meta",
+        "scheduler": {
+          "sourceIds.$": "$.schedulerResult.sourceIds",
+          "generatedAt.$": "$.schedulerResult.generatedAt",
+          "eligibleSources.$": "States.ArrayLength($.schedulerResult.sourceIds)"
+        }
+      },
+      "ResultPath": "$",
       "Next": "BuildExecutionOutput"
     },
     "BuildExecutionOutput": {
       "Type": "Pass",
       "Parameters": {
         "meta.$": "$.meta",
-        "sources.$": "$.schedulerResult.sourceIds",
+        "sources.$": "$.scheduler.sourceIds",
         "summary": {
-          "eligibleSources.$": "States.ArrayLength($.schedulerResult.sourceIds)",
-          "generatedAt.$": "$.schedulerResult.generatedAt"
+          "eligibleSources.$": "$.scheduler.eligibleSources",
+          "generatedAt.$": "$.scheduler.generatedAt",
+          "schedulerStatus": "SUCCEEDED"
         }
       },
       "ResultPath": "$",
       "Next": "Done"
+    },
+    "BuildSchedulerFailureOutput": {
+      "Type": "Pass",
+      "Parameters": {
+        "meta.$": "$.meta",
+        "sources": [],
+        "summary": {
+          "eligibleSources": 0,
+          "schedulerStatus": "FAILED",
+          "error.$": "$.schedulerError.Error",
+          "cause.$": "$.schedulerError.Cause"
+        }
+      },
+      "ResultPath": "$",
+      "Next": "SchedulerFailed"
+    },
+    "SchedulerFailed": {
+      "Type": "Fail",
+      "Error": "SchedulerStepFailed",
+      "Cause": "Scheduler task failed before Map state execution."
     },
     "Done": {
       "Type": "Succeed"

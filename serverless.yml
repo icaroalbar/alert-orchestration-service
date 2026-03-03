@@ -49,6 +49,7 @@ custom:
   naming:
     prefix: ${self:service}-${self:provider.stage}
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
+    orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule
     schedulerRoleName: ${self:custom.naming.prefix}-scheduler-role
     stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role
     collectorRoleName: ${self:custom.naming.prefix}-collector-role
@@ -70,6 +71,7 @@ custom:
       integrationDlqMessageRetentionSeconds: 1209600
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
+      orchestrationScheduleExpression: cron(0/30 * * * ? *)
     stg:
       region: us-east-1
       logRetentionInDays: 14
@@ -85,6 +87,7 @@ custom:
       integrationDlqMessageRetentionSeconds: 1209600
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
+      orchestrationScheduleExpression: cron(0/15 * * * ? *)
     prod:
       region: us-east-1
       logRetentionInDays: 30
@@ -100,6 +103,7 @@ custom:
       integrationDlqMessageRetentionSeconds: 1209600
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
+      orchestrationScheduleExpression: cron(0/5 * * * ? *)
 
 plugins:
   - serverless-step-functions
@@ -120,6 +124,17 @@ stepFunctions:
   stateMachines:
     main:
       name: ${self:custom.naming.prefix}-orchestration
+      events:
+        - schedule:
+            name: ${self:custom.naming.orchestrationScheduleRuleName}
+            description: Disparo global da orquestracao principal via EventBridge.
+            enabled: true
+            rate: ${self:custom.stages.${self:provider.stage}.orchestrationScheduleExpression}
+            input:
+              trigger: scheduled
+              source: eventbridge
+              stage: ${self:provider.stage}
+              service: ${self:service}
       role:
         Fn::GetAtt:
           - MainStateMachineExecutionRole

@@ -74,6 +74,15 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Criptografia em repouso do tópico SNS via `KmsMasterKeyId: alias/aws/sns`.
 - ARN do tópico exposto por output/export e variável de ambiente `CLIENT_EVENTS_TOPIC_ARN`.
 - Policy gerenciada dedicada (`collector-sns-publish`) para publicação da coletora com escopo mínimo em `sns:Publish` no tópico.
+- Filas SQS dedicadas por integração e por stage:
+  - Salesforce: `${service}-${stage}-salesforce-events`
+  - HubSpot: `${service}-${stage}-hubspot-events`
+- Retenção de mensagens configurada explicitamente (`MessageRetentionPeriod: 1209600`), com `VisibilityTimeout: 60` e long polling (`ReceiveMessageWaitTimeSeconds: 20`).
+- URLs e ARNs das filas expostos por outputs/exports e variáveis de ambiente:
+  - `SALESFORCE_INTEGRATION_QUEUE_URL`
+  - `SALESFORCE_INTEGRATION_QUEUE_ARN`
+  - `HUBSPOT_INTEGRATION_QUEUE_URL`
+  - `HUBSPOT_INTEGRATION_QUEUE_ARN`
 
 ### Validação por stage
 

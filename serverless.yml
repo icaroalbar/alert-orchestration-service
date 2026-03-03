@@ -16,6 +16,18 @@ provider:
     CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
     CLIENT_EVENTS_TOPIC_ARN:
       Ref: ClientEventsTopic
+    SALESFORCE_INTEGRATION_QUEUE_URL:
+      Ref: SalesforceIntegrationQueue
+    SALESFORCE_INTEGRATION_QUEUE_ARN:
+      Fn::GetAtt:
+        - SalesforceIntegrationQueue
+        - Arn
+    HUBSPOT_INTEGRATION_QUEUE_URL:
+      Ref: HubspotIntegrationQueue
+    HUBSPOT_INTEGRATION_QUEUE_ARN:
+      Fn::GetAtt:
+        - HubspotIntegrationQueue
+        - Arn
   stackTags:
     Service: ${self:service}
     Stage: ${self:provider.stage}
@@ -32,6 +44,9 @@ custom:
       sourcesTableName: ${self:service}-dev-sources
       cursorsTableName: ${self:service}-dev-cursors
       clientEventsTopicName: ${self:service}-dev-client-events
+      salesforceQueueName: ${self:service}-dev-salesforce-events
+      hubspotQueueName: ${self:service}-dev-hubspot-events
+      integrationQueueMessageRetentionSeconds: 1209600
     stg:
       region: us-east-1
       logRetentionInDays: 14
@@ -39,6 +54,9 @@ custom:
       sourcesTableName: ${self:service}-stg-sources
       cursorsTableName: ${self:service}-stg-cursors
       clientEventsTopicName: ${self:service}-stg-client-events
+      salesforceQueueName: ${self:service}-stg-salesforce-events
+      hubspotQueueName: ${self:service}-stg-hubspot-events
+      integrationQueueMessageRetentionSeconds: 1209600
     prod:
       region: us-east-1
       logRetentionInDays: 30
@@ -46,6 +64,9 @@ custom:
       sourcesTableName: ${self:service}-prod-sources
       cursorsTableName: ${self:service}-prod-cursors
       clientEventsTopicName: ${self:service}-prod-client-events
+      salesforceQueueName: ${self:service}-prod-salesforce-events
+      hubspotQueueName: ${self:service}-prod-hubspot-events
+      integrationQueueMessageRetentionSeconds: 1209600
 
 plugins:
   - serverless-step-functions
@@ -137,6 +158,34 @@ resources:
                 - sns:Publish
               Resource:
                 Ref: ClientEventsTopic
+    SalesforceIntegrationQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.stages.${self:provider.stage}.salesforceQueueName}
+        MessageRetentionPeriod: ${self:custom.stages.${self:provider.stage}.integrationQueueMessageRetentionSeconds}
+        VisibilityTimeout: 60
+        ReceiveMessageWaitTimeSeconds: 20
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+          - Key: Integration
+            Value: salesforce
+    HubspotIntegrationQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.stages.${self:provider.stage}.hubspotQueueName}
+        MessageRetentionPeriod: ${self:custom.stages.${self:provider.stage}.integrationQueueMessageRetentionSeconds}
+        VisibilityTimeout: 60
+        ReceiveMessageWaitTimeSeconds: 20
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+          - Key: Integration
+            Value: hubspot
   Outputs:
     ClientEventsTopicArn:
       Description: ARN do topico SNS de eventos de clientes.
@@ -150,3 +199,31 @@ resources:
         Ref: CollectorPublishPolicy
       Export:
         Name: ${self:custom.naming.prefix}-collector-publish-policy-arn
+    SalesforceIntegrationQueueUrl:
+      Description: URL da fila SQS da integracao Salesforce.
+      Value:
+        Ref: SalesforceIntegrationQueue
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-integration-queue-url
+    SalesforceIntegrationQueueArn:
+      Description: ARN da fila SQS da integracao Salesforce.
+      Value:
+        Fn::GetAtt:
+          - SalesforceIntegrationQueue
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-integration-queue-arn
+    HubspotIntegrationQueueUrl:
+      Description: URL da fila SQS da integracao HubSpot.
+      Value:
+        Ref: HubspotIntegrationQueue
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-integration-queue-url
+    HubspotIntegrationQueueArn:
+      Description: ARN da fila SQS da integracao HubSpot.
+      Value:
+        Fn::GetAtt:
+          - HubspotIntegrationQueue
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-integration-queue-arn

@@ -56,7 +56,9 @@ const staticFallback = () => {
     'source: eventbridge',
     'Service: states.amazonaws.com',
     'Sid: InvokeSchedulerLambda',
+    'Sid: InvokeCollectorLambda',
     'name: ${self:custom.naming.schedulerFunctionName}',
+    'handler: dist/handlers/collector.handler',
     'MainStateMachineExecutionRole',
     'SchedulerExecutionRole',
     'CollectorExecutionRole',
@@ -169,7 +171,13 @@ const staticFallback = () => {
   }
 
   const states = definition?.States ?? {};
-  const requiredStates = ['NormalizeInput', 'Scheduler', 'BuildExecutionOutput', 'Done'];
+  const requiredStates = [
+    'NormalizeInput',
+    'Scheduler',
+    'ProcessEligibleSources',
+    'BuildExecutionOutput',
+    'Done',
+  ];
   const missingStates = requiredStates.filter((stateName) => !(stateName in states));
   if (definition?.StartAt !== 'NormalizeInput' || missingStates.length > 0) {
     console.error('Falha no fallback estático: definição ASL principal incompleta.');

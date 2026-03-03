@@ -270,6 +270,35 @@ const staticFallback = () => {
     process.exit(1);
   }
 
+  const invokeCollectorCatch =
+    states.ProcessEligibleSources?.Iterator?.States?.InvokeCollector?.Catch;
+  const hasCollectorCatch =
+    Array.isArray(invokeCollectorCatch) &&
+    invokeCollectorCatch.some(
+      (entry) =>
+        JSON.stringify(entry?.ErrorEquals ?? []) === JSON.stringify(['States.ALL']) &&
+        entry?.ResultPath === '$.collectorError' &&
+        entry?.Next === 'BuildItemFailureResult',
+    );
+  if (!hasCollectorCatch) {
+    console.error('Falha no fallback estático: InvokeCollector sem Catch por item esperado.');
+    process.exit(1);
+  }
+
+  const buildItemFailureResult =
+    states.ProcessEligibleSources?.Iterator?.States?.BuildItemFailureResult ?? {};
+  if (
+    buildItemFailureResult?.Type !== 'Pass' ||
+    buildItemFailureResult?.Parameters?.status !== 'FAILED' ||
+    buildItemFailureResult?.Parameters?.['error.$'] !== '$.collectorError.Error' ||
+    buildItemFailureResult?.Parameters?.['cause.$'] !== '$.collectorError.Cause'
+  ) {
+    console.error(
+      'Falha no fallback estático: BuildItemFailureResult sem contrato esperado de erro.',
+    );
+    process.exit(1);
+  }
+
   console.warn(
     '\nAviso: renderização multi-stage indisponível por rede. Fallback estático no serverless.yml concluído.',
   );

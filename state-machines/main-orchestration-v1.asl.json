@@ -111,16 +111,33 @@
                 "BackoffRate": 2
               }
             ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.collectorError",
+                "Next": "BuildItemFailureResult"
+              }
+            ],
             "ResultPath": "$.collectorResult",
-            "Next": "BuildItemResult"
+            "Next": "BuildItemSuccessResult"
           },
-          "BuildItemResult": {
+          "BuildItemSuccessResult": {
             "Type": "Pass",
             "Parameters": {
               "sourceId.$": "$.sourceId",
               "status": "SUCCEEDED",
               "processedAt.$": "$.collectorResult.processedAt",
               "recordsSent.$": "$.collectorResult.recordsSent"
+            },
+            "End": true
+          },
+          "BuildItemFailureResult": {
+            "Type": "Pass",
+            "Parameters": {
+              "sourceId.$": "$.sourceId",
+              "status": "FAILED",
+              "error.$": "$.collectorError.Error",
+              "cause.$": "$.collectorError.Cause"
             },
             "End": true
           }

@@ -50,6 +50,10 @@ Payload esperado na execução:
 - Entrada: `scheduler.sourceIds` e `scheduler.maxConcurrency`.
 - Ação: itera cada `sourceId` e invoca `CollectorLambdaFunction`.
 - Retry com backoff exponencial na task `InvokeCollector` com os mesmos limites do `Scheduler`.
+- Catch por item no `InvokeCollector` (`States.ALL`) para registrar falha da fonte sem interromper o `Map`.
+- Contrato por item em `collectorResults`:
+  - sucesso: `sourceId`, `status=SUCCEEDED`, `processedAt`, `recordsSent`;
+  - falha: `sourceId`, `status=FAILED`, `error`, `cause`.
 - Controle de paralelismo:
   - `MaxConcurrencyPath = $.scheduler.maxConcurrency`.
   - Valor configurado por stage via `MAP_MAX_CONCURRENCY`.
@@ -60,7 +64,9 @@ Payload esperado na execução:
 - Saída final:
   - `meta`
   - `sources` (`schedulerResult.sourceIds`)
+  - `results` (lista de itens com sucesso/falha por `sourceId`)
   - `summary.eligibleSources` (tamanho de `sources`)
+  - `summary.processedSources` (tamanho de `results`)
   - `summary.generatedAt`
   - `summary.maxConcurrency` (limite aplicado no Map)
 

@@ -52,6 +52,7 @@ custom:
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
     createSourceFunctionName: ${self:custom.naming.prefix}-create-source
     updateSourceFunctionName: ${self:custom.naming.prefix}-update-source
+    listSourceFunctionName: ${self:custom.naming.prefix}-list-sources
     orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration
     orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule
     orchestrationLogGroupName: /aws/vendedlogs/states/${self:custom.naming.orchestrationStateMachineName}
@@ -167,6 +168,20 @@ functions:
       - httpApi:
           method: patch
           path: /sources/{id}
+  listSource:
+    name: ${self:custom.naming.listSourceFunctionName}
+    handler: dist/handlers/list-sources.handler
+    description: Endpoint GET para listagem paginada de fontes no plugin registry.
+    memorySize: 256
+    timeout: 30
+    role:
+      Fn::GetAtt:
+        - SourceRegistryApiExecutionRole
+        - Arn
+    events:
+      - httpApi:
+          method: get
+          path: /sources
 
 stepFunctions:
   stateMachines:
@@ -212,6 +227,11 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:custom.naming.updateSourceFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    ListSourceLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.listSourceFunctionName}
         RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
     MainOrchestrationStateMachineLogGroup:
       Type: AWS::Logs::LogGroup
@@ -382,6 +402,7 @@ resources:
                   Action:
                     - dynamodb:GetItem
                     - dynamodb:PutItem
+                    - dynamodb:Scan
                   Resource:
                     - Fn::GetAtt:
                         - SourcesTable
@@ -394,6 +415,7 @@ resources:
                   Resource:
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.createSourceFunctionName}:*
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.updateSourceFunctionName}:*
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.listSourceFunctionName}:*
     SalesforceConsumerExecutionRole:
       Type: AWS::IAM::Role
       Properties:

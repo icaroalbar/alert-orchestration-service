@@ -52,6 +52,13 @@ class SpySourceRegistryRepository implements SourceRegistryRepository {
     return Promise.resolve(this.storage.get(sourceId) ?? null);
   }
 
+  list(): Promise<{ items: SourceRegistryRecord[]; nextToken: string | null }> {
+    return Promise.resolve({
+      items: [...this.storage.values()],
+      nextToken: null,
+    });
+  }
+
   update({
     sourceId,
     source,

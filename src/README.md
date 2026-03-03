@@ -22,6 +22,7 @@
 src/
   handlers/
   domain/
+    sources/
   infra/
   shared/
 ```

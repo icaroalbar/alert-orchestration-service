@@ -48,6 +48,12 @@ provider:
 custom:
   naming:
     prefix: ${self:service}-${self:provider.stage}
+    schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
+    schedulerRoleName: ${self:custom.naming.prefix}-scheduler-role
+    stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role
+    collectorRoleName: ${self:custom.naming.prefix}-collector-role
+    salesforceConsumerRoleName: ${self:custom.naming.prefix}-salesforce-consumer-role
+    hubspotConsumerRoleName: ${self:custom.naming.prefix}-hubspot-consumer-role
   stages:
     dev:
       region: us-east-1
@@ -100,15 +106,24 @@ plugins:
 
 functions:
   scheduler:
+    name: ${self:custom.naming.schedulerFunctionName}
     handler: dist/handlers/scheduler.handler
     description: Lista fontes elegiveis para processamento incremental.
     memorySize: 256
     timeout: 30
+    role:
+      Fn::GetAtt:
+        - SchedulerExecutionRole
+        - Arn
 
 stepFunctions:
   stateMachines:
     main:
       name: ${self:custom.naming.prefix}-orchestration
+      role:
+        Fn::GetAtt:
+          - MainStateMachineExecutionRole
+          - Arn
       definition:
         Comment: Orquestrador base da plataforma de ingestao.
         StartAt: Scheduler
@@ -121,6 +136,181 @@ stepFunctions:
 
 resources:
   Resources:
+    SchedulerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.schedulerFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    SchedulerExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.naming.schedulerRoleName}
+        Description: Role de execucao da Lambda Scheduler com privilegio minimo.
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:custom.naming.prefix}-scheduler-dynamodb-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: QueryEligibleSources
+                  Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                  Resource:
+                    - Fn::GetAtt:
+                        - SourcesTable
+                        - Arn
+                    - Fn::Sub: ${SourcesTable.Arn}/index/active-nextRunAt-index
+                - Sid: UpdateNextRunAt
+                  Effect: Allow
+                  Action:
+                    - dynamodb:UpdateItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - SourcesTable
+                        - Arn
+                - Sid: WriteSchedulerLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.schedulerFunctionName}:*
+    MainStateMachineExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.naming.stateMachineRoleName}
+        Description: Role de execucao da State Machine principal com privilegio minimo.
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: states.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:custom.naming.prefix}-main-state-machine-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: InvokeSchedulerLambda
+                  Effect: Allow
+                  Action:
+                    - lambda:InvokeFunction
+                  Resource:
+                    - Fn::GetAtt:
+                        - SchedulerLambdaFunction
+                        - Arn
+                    - Fn::Sub: ${SchedulerLambdaFunction.Arn}:*
+    CollectorExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.naming.collectorRoleName}
+        Description: Role reservada da Lambda coletora com privilegio minimo para ingestao.
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:custom.naming.prefix}-collector-data-access-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: ReadSourceConfiguration
+                  Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:Query
+                  Resource:
+                    - Fn::GetAtt:
+                        - SourcesTable
+                        - Arn
+                    - Fn::Sub: ${SourcesTable.Arn}/index/active-nextRunAt-index
+                - Sid: ReadAndUpdateCursor
+                  Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:UpdateItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - CursorsTable
+                        - Arn
+                - Sid: PublishClientEvents
+                  Effect: Allow
+                  Action:
+                    - sns:Publish
+                  Resource:
+                    - Ref: ClientEventsTopic
+    SalesforceConsumerExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.naming.salesforceConsumerRoleName}
+        Description: Role reservada da consumidora Salesforce com privilegio minimo para SQS.
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:custom.naming.prefix}-salesforce-consumer-sqs-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: ConsumeSalesforceQueue
+                  Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:ChangeMessageVisibility
+                    - sqs:GetQueueAttributes
+                  Resource:
+                    - Fn::GetAtt:
+                        - SalesforceIntegrationQueue
+                        - Arn
+    HubspotConsumerExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.naming.hubspotConsumerRoleName}
+        Description: Role reservada da consumidora HubSpot com privilegio minimo para SQS.
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:custom.naming.prefix}-hubspot-consumer-sqs-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: ConsumeHubspotQueue
+                  Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:ChangeMessageVisibility
+                    - sqs:GetQueueAttributes
+                  Resource:
+                    - Fn::GetAtt:
+                        - HubspotIntegrationQueue
+                        - Arn
     SourcesTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -306,6 +496,46 @@ resources:
             - Arn
         RawMessageDelivery: true
   Outputs:
+    SchedulerExecutionRoleArn:
+      Description: ARN da role de execucao da Lambda Scheduler.
+      Value:
+        Fn::GetAtt:
+          - SchedulerExecutionRole
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-scheduler-execution-role-arn
+    MainStateMachineExecutionRoleArn:
+      Description: ARN da role de execucao da state machine principal.
+      Value:
+        Fn::GetAtt:
+          - MainStateMachineExecutionRole
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-state-machine-execution-role-arn
+    CollectorExecutionRoleArn:
+      Description: ARN da role reservada para a Lambda coletora.
+      Value:
+        Fn::GetAtt:
+          - CollectorExecutionRole
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-collector-execution-role-arn
+    SalesforceConsumerExecutionRoleArn:
+      Description: ARN da role reservada para a consumidora Salesforce.
+      Value:
+        Fn::GetAtt:
+          - SalesforceConsumerExecutionRole
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-consumer-execution-role-arn
+    HubspotConsumerExecutionRoleArn:
+      Description: ARN da role reservada para a consumidora HubSpot.
+      Value:
+        Fn::GetAtt:
+          - HubspotConsumerExecutionRole
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-consumer-execution-role-arn
     ClientEventsTopicArn:
       Description: ARN do topico SNS de eventos de clientes.
       Value:

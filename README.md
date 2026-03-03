@@ -102,6 +102,24 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - `SalesforceIntegrationSubscriptionArn`
   - `HubspotIntegrationSubscriptionArn`
 
+### IAM mínimo por função
+
+- A Lambda `scheduler` usa role dedicada (`${service}-${stage}-scheduler-role`) com:
+  - `dynamodb:Query` apenas na tabela `sources` e no índice `active-nextRunAt-index`.
+  - `dynamodb:UpdateItem` apenas na tabela `sources`.
+  - `logs:CreateLogStream` e `logs:PutLogEvents` apenas no log group `/aws/lambda/${service}-${stage}-scheduler`.
+- A state machine principal usa role dedicada (`${service}-${stage}-state-machine-role`) com permissão apenas de `lambda:InvokeFunction` na Lambda scheduler.
+- Roles reservadas para etapas seguintes já provisionadas com escopo mínimo e recursos explícitos:
+  - `collector-role` para leitura de config (`sources`), atualização de cursor (`cursors`) e `sns:Publish` no tópico de eventos.
+  - `salesforce-consumer-role` para consumo da fila `SalesforceIntegrationQueue`.
+  - `hubspot-consumer-role` para consumo da fila `HubspotIntegrationQueue`.
+- ARNs das roles exportados via outputs para reuso em stacks/funções futuras:
+  - `SchedulerExecutionRoleArn`
+  - `MainStateMachineExecutionRoleArn`
+  - `CollectorExecutionRoleArn`
+  - `SalesforceConsumerExecutionRoleArn`
+  - `HubspotConsumerExecutionRoleArn`
+
 ### Validação por stage
 
 Renderização do template por stage:

@@ -85,6 +85,12 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Subscription SNS -> SQS explícita para fan-out em ambas as integrações:
   - `SalesforceIntegrationSubscription` conectando `ClientEventsTopic` em `SalesforceIntegrationQueue`.
   - `HubspotIntegrationSubscription` conectando `ClientEventsTopic` em `HubspotIntegrationQueue`.
+- Regra global do EventBridge para disparar a Step Functions principal por stage:
+  - Nome: `${service}-${stage}-orchestration-schedule`
+  - Stage `dev`: `cron(0/30 * * * ? *)`
+  - Stage `stg`: `cron(0/15 * * * ? *)`
+  - Stage `prod`: `cron(0/5 * * * ? *)`
+  - Payload padrão enviado para execução: `trigger`, `source`, `stage`, `service`.
 - Policy mínima nas filas de integração (`IntegrationQueuesPolicy`) permitindo apenas:
   - `Principal: sns.amazonaws.com`
   - `Action: sqs:SendMessage`

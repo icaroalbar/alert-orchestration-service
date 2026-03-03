@@ -22,6 +22,7 @@
 src/
   handlers/
     create-source.ts
+    update-source.ts
   domain/
     scheduler/
     sources/

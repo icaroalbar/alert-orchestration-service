@@ -36,6 +36,15 @@ class SpySourceRegistryRepository implements SourceRegistryRepository {
     this.created.push(source);
     return Promise.resolve();
   }
+
+  getById(sourceId: string): Promise<SourceRegistryRecord | null> {
+    const found = this.created.find((item) => item.sourceId === sourceId);
+    return Promise.resolve(found ?? null);
+  }
+
+  update(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 describe('create-source handler', () => {

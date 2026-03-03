@@ -51,6 +51,7 @@ custom:
     prefix: ${self:service}-${self:provider.stage}
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
     createSourceFunctionName: ${self:custom.naming.prefix}-create-source
+    updateSourceFunctionName: ${self:custom.naming.prefix}-update-source
     orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration
     orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule
     orchestrationLogGroupName: /aws/vendedlogs/states/${self:custom.naming.orchestrationStateMachineName}
@@ -152,6 +153,20 @@ functions:
       - httpApi:
           method: post
           path: /sources
+  updateSource:
+    name: ${self:custom.naming.updateSourceFunctionName}
+    handler: dist/handlers/update-source.handler
+    description: Endpoint PATCH para atualizacao parcial de fontes no plugin registry.
+    memorySize: 256
+    timeout: 30
+    role:
+      Fn::GetAtt:
+        - SourceRegistryApiExecutionRole
+        - Arn
+    events:
+      - httpApi:
+          method: patch
+          path: /sources/{id}
 
 stepFunctions:
   stateMachines:
@@ -192,6 +207,11 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:custom.naming.createSourceFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    UpdateSourceLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.updateSourceFunctionName}
         RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
     MainOrchestrationStateMachineLogGroup:
       Type: AWS::Logs::LogGroup
@@ -343,7 +363,7 @@ resources:
       Type: AWS::IAM::Role
       Properties:
         RoleName: ${self:custom.naming.sourceRegistryApiRoleName}
-        Description: Role da API de fontes com privilegio minimo para criacao na tabela sources.
+        Description: Role da API de fontes com privilegio minimo para criacao e atualizacao na tabela sources.
         AssumeRolePolicyDocument:
           Version: '2012-10-17'
           Statement:
@@ -360,18 +380,20 @@ resources:
                 - Sid: CreateSource
                   Effect: Allow
                   Action:
+                    - dynamodb:GetItem
                     - dynamodb:PutItem
                   Resource:
                     - Fn::GetAtt:
                         - SourcesTable
                         - Arn
-                - Sid: WriteCreateSourceLogs
+                - Sid: WriteSourceRegistryApiLogs
                   Effect: Allow
                   Action:
                     - logs:CreateLogStream
                     - logs:PutLogEvents
                   Resource:
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.createSourceFunctionName}:*
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.updateSourceFunctionName}:*
     SalesforceConsumerExecutionRole:
       Type: AWS::IAM::Role
       Properties:

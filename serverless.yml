@@ -49,6 +49,7 @@ custom:
   naming:
     prefix: ${self:service}-${self:provider.stage}
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
+    orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration
     orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule
     schedulerRoleName: ${self:custom.naming.prefix}-scheduler-role
     stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role
@@ -123,7 +124,7 @@ functions:
 stepFunctions:
   stateMachines:
     main:
-      name: ${self:custom.naming.prefix}-orchestration
+      name: ${self:custom.naming.orchestrationStateMachineName}
       events:
         - schedule:
             name: ${self:custom.naming.orchestrationScheduleRuleName}
@@ -511,6 +512,17 @@ resources:
             - Arn
         RawMessageDelivery: true
   Outputs:
+    MainStateMachineName:
+      Description: Nome da state machine principal.
+      Value: ${self:custom.naming.orchestrationStateMachineName}
+      Export:
+        Name: ${self:custom.naming.prefix}-main-state-machine-name
+    MainStateMachineArn:
+      Description: ARN da state machine principal.
+      Value:
+        Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}
+      Export:
+        Name: ${self:custom.naming.prefix}-main-state-machine-arn
     SchedulerExecutionRoleArn:
       Description: ARN da role de execucao da Lambda Scheduler.
       Value:

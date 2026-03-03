@@ -1,5 +1,6 @@
 import {
   SourceAlreadyExistsError,
+  SourceVersionConflictError,
   type SourceRegistryRecord,
   type SourceRegistryRepository,
 } from '../../domain/sources/source-registry-repository';
@@ -26,6 +27,26 @@ export function createInMemorySourceRegistryRepository(
     },
     get(sourceId: string): SourceRegistryRecord | undefined {
       return storage.get(sourceId);
+    },
+    getById(sourceId: string): Promise<SourceRegistryRecord | null> {
+      return Promise.resolve(storage.get(sourceId) ?? null);
+    },
+    update({
+      sourceId,
+      source,
+      expectedUpdatedAt,
+    }: {
+      sourceId: string;
+      source: SourceRegistryRecord;
+      expectedUpdatedAt: string;
+    }): Promise<void> {
+      const current = storage.get(sourceId);
+      if (!current || current.updatedAt !== expectedUpdatedAt) {
+        throw new SourceVersionConflictError(sourceId);
+      }
+
+      storage.set(sourceId, source);
+      return Promise.resolve();
     },
   };
 }

@@ -1,0 +1,226 @@
+import { describe, expect, it } from '@jest/globals';
+
+import {
+  SourceAlreadyExistsError,
+  SourceVersionConflictError,
+  type SourceRegistryRecord,
+  type SourceRegistryRepository,
+} from '../../../src/domain/sources/source-registry-repository';
+import { createHandler } from '../../../src/handlers/update-source';
+
+const EXISTING_SOURCE: SourceRegistryRecord = {
+  sourceId: 'source-acme',
+  active: true,
+  engine: 'postgres',
+  secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:acme/source-db',
+  query: 'select * from customers where updated_at > {{cursor}}',
+  cursorField: 'updated_at',
+  fieldMap: {
+    id: 'customer_id',
+    email: 'email',
+  },
+  scheduleType: 'interval',
+  intervalMinutes: 30,
+  nextRunAt: '2026-03-03T10:00:00.000Z',
+  schemaVersion: '1.0.0',
+  createdAt: '2026-03-03T09:00:00.000Z',
+  updatedAt: '2026-03-03T09:30:00.000Z',
+};
+
+class SpySourceRegistryRepository implements SourceRegistryRepository {
+  private readonly storage = new Map<string, SourceRegistryRecord>();
+
+  constructor(
+    seed: SourceRegistryRecord[] = [],
+    private readonly failUpdate = false,
+  ) {
+    for (const source of seed) {
+      this.storage.set(source.sourceId, source);
+    }
+  }
+
+  create(source: SourceRegistryRecord): Promise<void> {
+    if (this.storage.has(source.sourceId)) {
+      throw new SourceAlreadyExistsError(source.sourceId);
+    }
+
+    this.storage.set(source.sourceId, source);
+    return Promise.resolve();
+  }
+
+  getById(sourceId: string): Promise<SourceRegistryRecord | null> {
+    return Promise.resolve(this.storage.get(sourceId) ?? null);
+  }
+
+  update({
+    sourceId,
+    source,
+    expectedUpdatedAt,
+  }: {
+    sourceId: string;
+    source: SourceRegistryRecord;
+    expectedUpdatedAt: string;
+  }): Promise<void> {
+    if (this.failUpdate) {
+      throw new SourceVersionConflictError(sourceId);
+    }
+
+    const current = this.storage.get(sourceId);
+    if (!current || current.updatedAt !== expectedUpdatedAt) {
+      throw new SourceVersionConflictError(sourceId);
+    }
+
+    this.storage.set(sourceId, source);
+    return Promise.resolve();
+  }
+
+  getSnapshot(sourceId: string): SourceRegistryRecord | undefined {
+    return this.storage.get(sourceId);
+  }
+}
+
+describe('update-source handler', () => {
+  it('updates only mutable fields and returns 200', async () => {
+    const repository = new SpySourceRegistryRepository([EXISTING_SOURCE]);
+    const handler = createHandler({
+      sourceRegistryRepository: repository,
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      pathParameters: { id: EXISTING_SOURCE.sourceId },
+      body: JSON.stringify({
+        active: false,
+        nextRunAt: '2026-03-03T12:30:00.000Z',
+      }),
+      requestContext: { requestId: 'req-41' },
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body)).toEqual({
+      sourceId: EXISTING_SOURCE.sourceId,
+      metadata: {
+        schemaVersion: '1.0.0',
+        createdAt: '2026-03-03T09:00:00.000Z',
+        updatedAt: '2026-03-03T12:00:00.000Z',
+        requestId: 'req-41',
+      },
+    });
+
+    const stored = repository.getSnapshot(EXISTING_SOURCE.sourceId);
+    expect(stored).toMatchObject({
+      sourceId: 'source-acme',
+      engine: 'postgres',
+      active: false,
+      nextRunAt: '2026-03-03T12:30:00.000Z',
+      createdAt: '2026-03-03T09:00:00.000Z',
+      updatedAt: '2026-03-03T12:00:00.000Z',
+    });
+  });
+
+  it('returns 404 when source does not exist', async () => {
+    const handler = createHandler({
+      sourceRegistryRepository: new SpySourceRegistryRepository(),
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      pathParameters: { id: 'missing-source' },
+      body: JSON.stringify({ active: false }),
+    });
+
+    expect(result.statusCode).toBe(404);
+    expect(JSON.parse(result.body)).toEqual({
+      message: 'Source "missing-source" was not found.',
+      code: 'SOURCE_NOT_FOUND',
+    });
+  });
+
+  it('returns 422 when payload contains immutable fields', async () => {
+    const handler = createHandler({
+      sourceRegistryRepository: new SpySourceRegistryRepository([EXISTING_SOURCE]),
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      pathParameters: { id: EXISTING_SOURCE.sourceId },
+      body: JSON.stringify({
+        sourceId: 'other-source',
+        active: false,
+      }),
+    });
+
+    expect(result.statusCode).toBe(422);
+    const parsed = JSON.parse(result.body) as {
+      message: string;
+      errors: Array<{ field: string }>;
+    };
+    expect(parsed.message).toBe('Source patch validation failed.');
+    expect(parsed.errors.some((entry) => entry.field === 'sourceId')).toBe(true);
+  });
+
+  it('returns 409 when update detects version conflict', async () => {
+    const handler = createHandler({
+      sourceRegistryRepository: new SpySourceRegistryRepository([EXISTING_SOURCE], true),
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      pathParameters: { id: EXISTING_SOURCE.sourceId },
+      body: JSON.stringify({ active: false }),
+    });
+
+    expect(result.statusCode).toBe(409);
+    expect(JSON.parse(result.body)).toEqual({
+      message: 'Source "source-acme" version conflict.',
+      code: 'SOURCE_VERSION_CONFLICT',
+    });
+  });
+
+  it('returns 422 when merged state violates source schema', async () => {
+    const handler = createHandler({
+      sourceRegistryRepository: new SpySourceRegistryRepository([EXISTING_SOURCE]),
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      pathParameters: { id: EXISTING_SOURCE.sourceId },
+      body: JSON.stringify({
+        scheduleType: 'cron',
+      }),
+    });
+
+    expect(result.statusCode).toBe(422);
+    const parsed = JSON.parse(result.body) as {
+      message: string;
+      errors: Array<{ field: string }>;
+    };
+    expect(parsed.message).toBe('Source patch validation failed.');
+    expect(parsed.errors.some((entry) => entry.field === 'cronExpr')).toBe(true);
+  });
+
+  it('allows switching from interval to cron when cronExpr is provided', async () => {
+    const repository = new SpySourceRegistryRepository([EXISTING_SOURCE]);
+    const handler = createHandler({
+      sourceRegistryRepository: repository,
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      pathParameters: { id: EXISTING_SOURCE.sourceId },
+      body: JSON.stringify({
+        scheduleType: 'cron',
+        cronExpr: '0 */15 * * *',
+      }),
+    });
+
+    expect(result.statusCode).toBe(200);
+    const stored = repository.getSnapshot(EXISTING_SOURCE.sourceId);
+    expect(stored).toMatchObject({
+      sourceId: 'source-acme',
+      scheduleType: 'cron',
+      cronExpr: '0 */15 * * *',
+    });
+    expect(stored?.intervalMinutes).toBeUndefined();
+  });
+});

@@ -124,20 +124,148 @@
           "BuildItemSuccessResult": {
             "Type": "Pass",
             "Parameters": {
-              "sourceId.$": "$.sourceId",
-              "status": "SUCCEEDED",
-              "processedAt.$": "$.collectorResult.processedAt",
-              "recordsSent.$": "$.collectorResult.recordsSent"
+              "result": {
+                "sourceId.$": "$.sourceId",
+                "status": "SUCCEEDED",
+                "processedAt.$": "$.collectorResult.processedAt",
+                "recordsSent.$": "$.collectorResult.recordsSent"
+              },
+              "metric": {
+                "stage.$": "$.meta.stage",
+                "executionId.$": "$.meta.executionId",
+                "sourceId.$": "$.sourceId"
+              }
+            },
+            "Next": "PublishItemSuccessMetric"
+          },
+          "PublishItemSuccessMetric": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+            "Parameters": {
+              "Namespace": "AlertOrchestrationService/Orchestration",
+              "MetricData": [
+                {
+                  "MetricName": "SourceProcessed",
+                  "Dimensions": [
+                    {
+                      "Name": "Stage",
+                      "Value.$": "$.metric.stage"
+                    }
+                  ],
+                  "Unit": "Count",
+                  "Value": 1
+                },
+                {
+                  "MetricName": "SourceProcessedBySource",
+                  "Dimensions": [
+                    {
+                      "Name": "Stage",
+                      "Value.$": "$.metric.stage"
+                    },
+                    {
+                      "Name": "ExecutionId",
+                      "Value.$": "$.metric.executionId"
+                    },
+                    {
+                      "Name": "SourceId",
+                      "Value.$": "$.metric.sourceId"
+                    }
+                  ],
+                  "Unit": "Count",
+                  "Value": 1
+                }
+              ]
+            },
+            "Next": "ReturnItemSuccessResult",
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.metricPublishError",
+                "Next": "ReturnItemSuccessResult"
+              }
+            ]
+          },
+          "ReturnItemSuccessResult": {
+            "Type": "Pass",
+            "Parameters": {
+              "sourceId.$": "$.result.sourceId",
+              "status.$": "$.result.status",
+              "processedAt.$": "$.result.processedAt",
+              "recordsSent.$": "$.result.recordsSent"
             },
             "End": true
           },
           "BuildItemFailureResult": {
             "Type": "Pass",
             "Parameters": {
-              "sourceId.$": "$.sourceId",
-              "status": "FAILED",
-              "error.$": "$.collectorError.Error",
-              "cause.$": "$.collectorError.Cause"
+              "result": {
+                "sourceId.$": "$.sourceId",
+                "status": "FAILED",
+                "error.$": "$.collectorError.Error",
+                "cause.$": "$.collectorError.Cause"
+              },
+              "metric": {
+                "stage.$": "$.meta.stage",
+                "executionId.$": "$.meta.executionId",
+                "sourceId.$": "$.sourceId"
+              }
+            },
+            "Next": "PublishItemFailureMetric"
+          },
+          "PublishItemFailureMetric": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+            "Parameters": {
+              "Namespace": "AlertOrchestrationService/Orchestration",
+              "MetricData": [
+                {
+                  "MetricName": "SourceFailed",
+                  "Dimensions": [
+                    {
+                      "Name": "Stage",
+                      "Value.$": "$.metric.stage"
+                    }
+                  ],
+                  "Unit": "Count",
+                  "Value": 1
+                },
+                {
+                  "MetricName": "SourceFailedBySource",
+                  "Dimensions": [
+                    {
+                      "Name": "Stage",
+                      "Value.$": "$.metric.stage"
+                    },
+                    {
+                      "Name": "ExecutionId",
+                      "Value.$": "$.metric.executionId"
+                    },
+                    {
+                      "Name": "SourceId",
+                      "Value.$": "$.metric.sourceId"
+                    }
+                  ],
+                  "Unit": "Count",
+                  "Value": 1
+                }
+              ]
+            },
+            "Next": "ReturnItemFailureResult",
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.metricPublishError",
+                "Next": "ReturnItemFailureResult"
+              }
+            ]
+          },
+          "ReturnItemFailureResult": {
+            "Type": "Pass",
+            "Parameters": {
+              "sourceId.$": "$.result.sourceId",
+              "status.$": "$.result.status",
+              "error.$": "$.result.error",
+              "cause.$": "$.result.cause"
             },
             "End": true
           }
@@ -161,7 +289,72 @@
         }
       },
       "ResultPath": "$",
-      "Next": "Done"
+      "Next": "PublishExecutionSuccessMetric"
+    },
+    "PublishExecutionSuccessMetric": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "AlertOrchestrationService/Orchestration",
+        "MetricData": [
+          {
+            "MetricName": "ExecutionSucceeded",
+            "Dimensions": [
+              {
+                "Name": "Stage",
+                "Value.$": "$.meta.stage"
+              }
+            ],
+            "Unit": "Count",
+            "Value": 1
+          },
+          {
+            "MetricName": "ExecutionSucceededByExecution",
+            "Dimensions": [
+              {
+                "Name": "Stage",
+                "Value.$": "$.meta.stage"
+              },
+              {
+                "Name": "ExecutionId",
+                "Value.$": "$.meta.executionId"
+              }
+            ],
+            "Unit": "Count",
+            "Value": 1
+          },
+          {
+            "MetricName": "ProcessedSources",
+            "Dimensions": [
+              {
+                "Name": "Stage",
+                "Value.$": "$.meta.stage"
+              }
+            ],
+            "Unit": "Count",
+            "Value.$": "$.summary.processedSources"
+          },
+          {
+            "MetricName": "EligibleSources",
+            "Dimensions": [
+              {
+                "Name": "Stage",
+                "Value.$": "$.meta.stage"
+              }
+            ],
+            "Unit": "Count",
+            "Value.$": "$.summary.eligibleSources"
+          }
+        ]
+      },
+      "Next": "Done",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.metricPublishError",
+          "Next": "Done"
+        }
+      ]
     },
     "BuildSchedulerFailureOutput": {
       "Type": "Pass",
@@ -178,7 +371,50 @@
         }
       },
       "ResultPath": "$",
-      "Next": "SchedulerFailed"
+      "Next": "PublishExecutionFailureMetric"
+    },
+    "PublishExecutionFailureMetric": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "AlertOrchestrationService/Orchestration",
+        "MetricData": [
+          {
+            "MetricName": "ExecutionFailed",
+            "Dimensions": [
+              {
+                "Name": "Stage",
+                "Value.$": "$.meta.stage"
+              }
+            ],
+            "Unit": "Count",
+            "Value": 1
+          },
+          {
+            "MetricName": "ExecutionFailedByExecution",
+            "Dimensions": [
+              {
+                "Name": "Stage",
+                "Value.$": "$.meta.stage"
+              },
+              {
+                "Name": "ExecutionId",
+                "Value.$": "$.meta.executionId"
+              }
+            ],
+            "Unit": "Count",
+            "Value": 1
+          }
+        ]
+      },
+      "Next": "SchedulerFailed",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.metricPublishError",
+          "Next": "SchedulerFailed"
+        }
+      ]
     },
     "SchedulerFailed": {
       "Type": "Fail",

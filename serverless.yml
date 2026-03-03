@@ -120,6 +120,16 @@ functions:
       Fn::GetAtt:
         - SchedulerExecutionRole
         - Arn
+  collector:
+    name: ${self:custom.naming.prefix}-collector
+    handler: dist/handlers/collector.handler
+    description: Coletora generica acionada por sourceId em cada iteracao do Map State.
+    memorySize: 512
+    timeout: 60
+    role:
+      Fn::GetAtt:
+        - CollectorExecutionRole
+        - Arn
 
 stepFunctions:
   stateMachines:
@@ -218,6 +228,15 @@ resources:
                         - SchedulerLambdaFunction
                         - Arn
                     - Fn::Sub: ${SchedulerLambdaFunction.Arn}:*
+                - Sid: InvokeCollectorLambda
+                  Effect: Allow
+                  Action:
+                    - lambda:InvokeFunction
+                  Resource:
+                    - Fn::GetAtt:
+                        - CollectorLambdaFunction
+                        - Arn
+                    - Fn::Sub: ${CollectorLambdaFunction.Arn}:*
     CollectorExecutionRole:
       Type: AWS::IAM::Role
       Properties:

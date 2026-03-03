@@ -26,6 +26,7 @@ describe('main-orchestration-v1.asl.json', () => {
     const normalizeInput = asObject(states.NormalizeInput);
     const scheduler = asObject(states.Scheduler);
     const normalizeSchedulerOutput = asObject(states.NormalizeSchedulerOutput);
+    const processEligibleSources = asObject(states.ProcessEligibleSources);
     const buildExecutionOutput = asObject(states.BuildExecutionOutput);
     const buildSchedulerFailureOutput = asObject(states.BuildSchedulerFailureOutput);
     const schedulerFailed = asObject(states.SchedulerFailed);
@@ -63,7 +64,7 @@ describe('main-orchestration-v1.asl.json', () => {
 
     expect(normalizeSchedulerOutput.Type).toBe('Pass');
     expect(normalizeSchedulerOutput.ResultPath).toBe('$');
-    expect(normalizeSchedulerOutput.Next).toBe('BuildExecutionOutput');
+    expect(normalizeSchedulerOutput.Next).toBe('ProcessEligibleSources');
     const normalizeSchedulerParameters = asObject(normalizeSchedulerOutput.Parameters);
     expect(normalizeSchedulerParameters['meta.$']).toBe('$.meta');
     const schedulerPayload = asObject(normalizeSchedulerParameters.scheduler);
@@ -73,13 +74,45 @@ describe('main-orchestration-v1.asl.json', () => {
       'States.ArrayLength($.schedulerResult.sourceIds)',
     );
 
+    expect(processEligibleSources.Type).toBe('Map');
+    expect(processEligibleSources.ItemsPath).toBe('$.scheduler.sourceIds');
+    expect(processEligibleSources.ResultPath).toBe('$.collectorResults');
+    expect(processEligibleSources.Next).toBe('BuildExecutionOutput');
+    const processEligibleSourcesParameters = asObject(processEligibleSources.Parameters);
+    expect(processEligibleSourcesParameters['sourceId.$']).toBe('$$.Map.Item.Value');
+    expect(processEligibleSourcesParameters['meta.$']).toBe('$.meta');
+    const iterator = asObject(processEligibleSources.Iterator);
+    expect(iterator.StartAt).toBe('InvokeCollector');
+    const iteratorStates = asObject(iterator.States);
+    const invokeCollector = asObject(iteratorStates.InvokeCollector);
+    const buildItemResult = asObject(iteratorStates.BuildItemResult);
+
+    expect(invokeCollector.Type).toBe('Task');
+    expect(invokeCollector.ResultPath).toBe('$.collectorResult');
+    expect(invokeCollector.Next).toBe('BuildItemResult');
+    const invokeCollectorResource = asObject(invokeCollector.Resource);
+    expect(invokeCollectorResource['Fn::GetAtt']).toEqual(['CollectorLambdaFunction', 'Arn']);
+    const invokeCollectorParameters = asObject(invokeCollector.Parameters);
+    expect(invokeCollectorParameters['sourceId.$']).toBe('$.sourceId');
+    expect(invokeCollectorParameters['meta.$']).toBe('$.meta');
+
+    expect(buildItemResult.Type).toBe('Pass');
+    expect(buildItemResult.End).toBe(true);
+    const buildItemResultParameters = asObject(buildItemResult.Parameters);
+    expect(buildItemResultParameters['sourceId.$']).toBe('$.sourceId');
+    expect(buildItemResultParameters.status).toBe('SUCCEEDED');
+    expect(buildItemResultParameters['processedAt.$']).toBe('$.collectorResult.processedAt');
+    expect(buildItemResultParameters['recordsSent.$']).toBe('$.collectorResult.recordsSent');
+
     expect(buildExecutionOutput.Type).toBe('Pass');
     expect(buildExecutionOutput.ResultPath).toBe('$');
     expect(buildExecutionOutput.Next).toBe('Done');
     const outputParameters = asObject(buildExecutionOutput.Parameters);
     expect(outputParameters['meta.$']).toBe('$.meta');
     expect(outputParameters['sources.$']).toBe('$.scheduler.sourceIds');
+    expect(outputParameters['results.$']).toBe('$.collectorResults');
     const summary = asObject(outputParameters.summary);
+    expect(summary['processedSources.$']).toBe('States.ArrayLength($.collectorResults)');
     expect(summary['eligibleSources.$']).toBe('$.scheduler.eligibleSources');
     expect(summary['generatedAt.$']).toBe('$.scheduler.generatedAt');
     expect(summary.schedulerStatus).toBe('SUCCEEDED');
@@ -90,7 +123,9 @@ describe('main-orchestration-v1.asl.json', () => {
     const buildSchedulerFailureParameters = asObject(buildSchedulerFailureOutput.Parameters);
     expect(buildSchedulerFailureParameters['meta.$']).toBe('$.meta');
     expect(buildSchedulerFailureParameters.sources).toEqual([]);
+    expect(buildSchedulerFailureParameters.results).toEqual([]);
     const failureSummary = asObject(buildSchedulerFailureParameters.summary);
+    expect(failureSummary.processedSources).toBe(0);
     expect(failureSummary.eligibleSources).toBe(0);
     expect(failureSummary.schedulerStatus).toBe('FAILED');
     expect(failureSummary['error.$']).toBe('$.schedulerError.Error');

@@ -50,6 +50,43 @@
         }
       },
       "ResultPath": "$",
+      "Next": "ProcessEligibleSources"
+    },
+    "ProcessEligibleSources": {
+      "Type": "Map",
+      "ItemsPath": "$.scheduler.sourceIds",
+      "Parameters": {
+        "sourceId.$": "$$.Map.Item.Value",
+        "meta.$": "$.meta"
+      },
+      "Iterator": {
+        "StartAt": "InvokeCollector",
+        "States": {
+          "InvokeCollector": {
+            "Type": "Task",
+            "Resource": {
+              "Fn::GetAtt": ["CollectorLambdaFunction", "Arn"]
+            },
+            "Parameters": {
+              "sourceId.$": "$.sourceId",
+              "meta.$": "$.meta"
+            },
+            "ResultPath": "$.collectorResult",
+            "Next": "BuildItemResult"
+          },
+          "BuildItemResult": {
+            "Type": "Pass",
+            "Parameters": {
+              "sourceId.$": "$.sourceId",
+              "status": "SUCCEEDED",
+              "processedAt.$": "$.collectorResult.processedAt",
+              "recordsSent.$": "$.collectorResult.recordsSent"
+            },
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.collectorResults",
       "Next": "BuildExecutionOutput"
     },
     "BuildExecutionOutput": {
@@ -57,7 +94,9 @@
       "Parameters": {
         "meta.$": "$.meta",
         "sources.$": "$.scheduler.sourceIds",
+        "results.$": "$.collectorResults",
         "summary": {
+          "processedSources.$": "States.ArrayLength($.collectorResults)",
           "eligibleSources.$": "$.scheduler.eligibleSources",
           "generatedAt.$": "$.scheduler.generatedAt",
           "schedulerStatus": "SUCCEEDED"
@@ -71,7 +110,9 @@
       "Parameters": {
         "meta.$": "$.meta",
         "sources": [],
+        "results": [],
         "summary": {
+          "processedSources": 0,
           "eligibleSources": 0,
           "schedulerStatus": "FAILED",
           "error.$": "$.schedulerError.Error",

@@ -140,15 +140,7 @@ stepFunctions:
         Fn::GetAtt:
           - MainStateMachineExecutionRole
           - Arn
-      definition:
-        Comment: Orquestrador base da plataforma de ingestao.
-        StartAt: Scheduler
-        States:
-          Scheduler:
-            Type: Task
-            Resource:
-              Fn::GetAtt: [SchedulerLambdaFunction, Arn]
-            End: true
+      definition: ${file(./state-machines/main-orchestration-v1.asl.json)}
 
 resources:
   Resources:

@@ -1,0 +1,52 @@
+{
+  "Comment": "Orquestrador principal v1 da plataforma de ingestao.",
+  "StartAt": "NormalizeInput",
+  "States": {
+    "NormalizeInput": {
+      "Type": "Pass",
+      "Parameters": {
+        "meta": {
+          "executionId.$": "$$.Execution.Id",
+          "stateMachineId.$": "$$.StateMachine.Id",
+          "startedAt.$": "$$.Execution.StartTime",
+          "trigger.$": "$.trigger",
+          "source.$": "$.source",
+          "stage.$": "$.stage",
+          "service.$": "$.service"
+        },
+        "schedulerInput": {
+          "now.$": "$.now"
+        }
+      },
+      "ResultPath": "$",
+      "Next": "Scheduler"
+    },
+    "Scheduler": {
+      "Type": "Task",
+      "Resource": {
+        "Fn::GetAtt": ["SchedulerLambdaFunction", "Arn"]
+      },
+      "Parameters": {
+        "now.$": "$.schedulerInput.now"
+      },
+      "ResultPath": "$.schedulerResult",
+      "Next": "BuildExecutionOutput"
+    },
+    "BuildExecutionOutput": {
+      "Type": "Pass",
+      "Parameters": {
+        "meta.$": "$.meta",
+        "sources.$": "$.schedulerResult.sourceIds",
+        "summary": {
+          "eligibleSources.$": "States.ArrayLength($.schedulerResult.sourceIds)",
+          "generatedAt.$": "$.schedulerResult.generatedAt"
+        }
+      },
+      "ResultPath": "$",
+      "Next": "Done"
+    },
+    "Done": {
+      "Type": "Succeed"
+    }
+  }
+}

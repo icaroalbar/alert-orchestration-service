@@ -92,6 +92,8 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Stage `stg`: `cron(0/15 * * * ? *)`
   - Stage `prod`: `cron(0/5 * * * ? *)`
   - Payload padrão enviado para execução: `trigger`, `source`, `stage`, `service`.
+- Definição da state machine principal versionada em `state-machines/main-orchestration-v1.asl.json`.
+- Contratos de entrada/saída por estado documentados em `docs/step-functions/main-orchestration-v1.md`.
 - Policy mínima nas filas de integração (`IntegrationQueuesPolicy`) permitindo apenas:
   - `Principal: sns.amazonaws.com`
   - `Action: sqs:SendMessage`

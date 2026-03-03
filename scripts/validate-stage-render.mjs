@@ -18,6 +18,10 @@ const printCapturedOutput = (error) => {
 
 const staticFallback = () => {
   const serverless = readFileSync(new URL('../serverless.yml', import.meta.url), 'utf8');
+  const stateMachineFile = new URL(
+    '../state-machines/main-orchestration-v1.asl.json',
+    import.meta.url,
+  );
   const checks = [
     "stage: ${opt:stage, 'dev'}",
     'prefix: ${self:service}-${self:provider.stage}',
@@ -45,13 +49,11 @@ const staticFallback = () => {
     'hubspotConsumerRoleName: ${self:custom.naming.prefix}-hubspot-consumer-role',
     'name: ${self:custom.naming.orchestrationStateMachineName}',
     'name: ${self:custom.naming.orchestrationScheduleRuleName}',
+    'definition: ${file(./state-machines/main-orchestration-v1.asl.json)}',
     'description: Disparo global da orquestracao principal via EventBridge.',
     'rate: ${self:custom.stages.${self:provider.stage}.orchestrationScheduleExpression}',
     'trigger: scheduled',
     'source: eventbridge',
-    'StartAt: Scheduler',
-    'Type: Task',
-    'Fn::GetAtt: [SchedulerLambdaFunction, Arn]',
     'Service: states.amazonaws.com',
     'Sid: InvokeSchedulerLambda',
     'name: ${self:custom.naming.schedulerFunctionName}',
@@ -153,6 +155,29 @@ const staticFallback = () => {
     console.error('Falha no fallback estático de stage render:');
     for (const check of missing) {
       console.error(`- Ausente: ${check}`);
+    }
+    process.exit(1);
+  }
+
+  let definition;
+  try {
+    definition = JSON.parse(readFileSync(stateMachineFile, 'utf8'));
+  } catch (error) {
+    console.error('Falha no fallback estático: arquivo ASL inválido.');
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  const states = definition?.States ?? {};
+  const requiredStates = ['NormalizeInput', 'Scheduler', 'BuildExecutionOutput', 'Done'];
+  const missingStates = requiredStates.filter((stateName) => !(stateName in states));
+  if (definition?.StartAt !== 'NormalizeInput' || missingStates.length > 0) {
+    console.error('Falha no fallback estático: definição ASL principal incompleta.');
+    if (definition?.StartAt !== 'NormalizeInput') {
+      console.error('- StartAt deve ser NormalizeInput');
+    }
+    for (const stateName of missingStates) {
+      console.error(`- Estado ausente: ${stateName}`);
     }
     process.exit(1);
   }

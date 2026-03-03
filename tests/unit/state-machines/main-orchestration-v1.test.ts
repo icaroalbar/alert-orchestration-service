@@ -70,12 +70,14 @@ describe('main-orchestration-v1.asl.json', () => {
     const schedulerPayload = asObject(normalizeSchedulerParameters.scheduler);
     expect(schedulerPayload['sourceIds.$']).toBe('$.schedulerResult.sourceIds');
     expect(schedulerPayload['generatedAt.$']).toBe('$.schedulerResult.generatedAt');
+    expect(schedulerPayload['maxConcurrency.$']).toBe('$.schedulerResult.maxConcurrency');
     expect(schedulerPayload['eligibleSources.$']).toBe(
       'States.ArrayLength($.schedulerResult.sourceIds)',
     );
 
     expect(processEligibleSources.Type).toBe('Map');
     expect(processEligibleSources.ItemsPath).toBe('$.scheduler.sourceIds');
+    expect(processEligibleSources.MaxConcurrencyPath).toBe('$.scheduler.maxConcurrency');
     expect(processEligibleSources.ResultPath).toBe('$.collectorResults');
     expect(processEligibleSources.Next).toBe('BuildExecutionOutput');
     const processEligibleSourcesParameters = asObject(processEligibleSources.Parameters);
@@ -115,6 +117,7 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(summary['processedSources.$']).toBe('States.ArrayLength($.collectorResults)');
     expect(summary['eligibleSources.$']).toBe('$.scheduler.eligibleSources');
     expect(summary['generatedAt.$']).toBe('$.scheduler.generatedAt');
+    expect(summary['maxConcurrency.$']).toBe('$.scheduler.maxConcurrency');
     expect(summary.schedulerStatus).toBe('SUCCEEDED');
 
     expect(buildSchedulerFailureOutput.Type).toBe('Pass');

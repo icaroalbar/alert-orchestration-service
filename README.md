@@ -92,6 +92,13 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Stage `stg`: `cron(0/15 * * * ? *)`
   - Stage `prod`: `cron(0/5 * * * ? *)`
   - Payload padrão enviado para execução: `trigger`, `source`, `stage`, `service`.
+- Controle de paralelismo do `Map State` por stage:
+  - Variável de ambiente: `MAP_MAX_CONCURRENCY`.
+  - Stage `dev`: `2`
+  - Stage `stg`: `5`
+  - Stage `prod`: `10`
+  - Limites aceitos em runtime: inteiro entre `1` e `40`.
+  - Fallback no scheduler quando ausente: `5`.
 - Definição da state machine principal versionada em `state-machines/main-orchestration-v1.asl.json`.
 - Contratos de entrada/saída por estado documentados em `docs/step-functions/main-orchestration-v1.md`.
 - Policy mínima nas filas de integração (`IntegrationQueuesPolicy`) permitindo apenas:

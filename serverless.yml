@@ -14,6 +14,7 @@ provider:
     SERVICE_NAME: ${self:service}
     SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}
     CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
+    MAP_MAX_CONCURRENCY: ${self:custom.stages.${self:provider.stage}.mapMaxConcurrency}
     CLIENT_EVENTS_TOPIC_ARN:
       Ref: ClientEventsTopic
     SALESFORCE_INTEGRATION_QUEUE_URL:
@@ -72,6 +73,7 @@ custom:
       integrationDlqMessageRetentionSeconds: 1209600
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
+      mapMaxConcurrency: 2
       orchestrationScheduleExpression: cron(0/30 * * * ? *)
     stg:
       region: us-east-1
@@ -88,6 +90,7 @@ custom:
       integrationDlqMessageRetentionSeconds: 1209600
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
+      mapMaxConcurrency: 5
       orchestrationScheduleExpression: cron(0/15 * * * ? *)
     prod:
       region: us-east-1
@@ -104,6 +107,7 @@ custom:
       integrationDlqMessageRetentionSeconds: 1209600
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
+      mapMaxConcurrency: 10
       orchestrationScheduleExpression: cron(0/5 * * * ? *)
 
 plugins:

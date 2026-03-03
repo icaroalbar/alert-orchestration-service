@@ -34,6 +34,15 @@ Payload esperado na execução:
 - Saída esperada em `schedulerResult`:
   - `sourceIds` (array de string)
   - `generatedAt` (string ISO)
+  - `maxConcurrency` (number, inteiro entre 1 e 40)
+
+### ProcessEligibleSources (Map)
+
+- Entrada: `scheduler.sourceIds` e `scheduler.maxConcurrency`.
+- Ação: itera cada `sourceId` e invoca `CollectorLambdaFunction`.
+- Controle de paralelismo:
+  - `MaxConcurrencyPath = $.scheduler.maxConcurrency`.
+  - Valor configurado por stage via `MAP_MAX_CONCURRENCY`.
 
 ### BuildExecutionOutput (Pass)
 
@@ -43,6 +52,7 @@ Payload esperado na execução:
   - `sources` (`schedulerResult.sourceIds`)
   - `summary.eligibleSources` (tamanho de `sources`)
   - `summary.generatedAt`
+  - `summary.maxConcurrency` (limite aplicado no Map)
 
 ### Done (Succeed)
 

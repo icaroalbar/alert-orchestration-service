@@ -175,6 +175,18 @@ const staticFallback = () => {
   }
 
   const states = definition?.States ?? {};
+  const hasExpectedRetryPolicy = (retryBlock, expectedErrors, intervalSeconds, maxAttempts) =>
+    Array.isArray(retryBlock) &&
+    retryBlock.some((entry) => {
+      const errors = Array.isArray(entry?.ErrorEquals) ? entry.ErrorEquals : [];
+      return (
+        JSON.stringify(errors) === JSON.stringify(expectedErrors) &&
+        entry?.IntervalSeconds === intervalSeconds &&
+        entry?.MaxAttempts === maxAttempts &&
+        entry?.BackoffRate === 2
+      );
+    });
+
   const requiredStates = [
     'NormalizeInput',
     'Scheduler',
@@ -211,6 +223,50 @@ const staticFallback = () => {
   const summaryParams = buildExecutionOutput.Parameters?.summary ?? {};
   if (summaryParams['maxConcurrency.$'] !== '$.scheduler.maxConcurrency') {
     console.error('Falha no fallback estático: summary sem maxConcurrency.');
+    process.exit(1);
+  }
+
+  const schedulerRetry = states.Scheduler?.Retry;
+  const hasSchedulerLambdaRetry = hasExpectedRetryPolicy(
+    schedulerRetry,
+    [
+      'Lambda.ServiceException',
+      'Lambda.AWSLambdaException',
+      'Lambda.SdkClientException',
+      'Lambda.TooManyRequestsException',
+    ],
+    2,
+    3,
+  );
+  const hasSchedulerTimeoutRetry = hasExpectedRetryPolicy(schedulerRetry, ['States.Timeout'], 5, 2);
+  if (!hasSchedulerLambdaRetry || !hasSchedulerTimeoutRetry) {
+    console.error('Falha no fallback estático: Scheduler sem política de retry/backoff esperada.');
+    process.exit(1);
+  }
+
+  const invokeCollectorRetry =
+    states.ProcessEligibleSources?.Iterator?.States?.InvokeCollector?.Retry;
+  const hasCollectorLambdaRetry = hasExpectedRetryPolicy(
+    invokeCollectorRetry,
+    [
+      'Lambda.ServiceException',
+      'Lambda.AWSLambdaException',
+      'Lambda.SdkClientException',
+      'Lambda.TooManyRequestsException',
+    ],
+    2,
+    3,
+  );
+  const hasCollectorTimeoutRetry = hasExpectedRetryPolicy(
+    invokeCollectorRetry,
+    ['States.Timeout'],
+    5,
+    2,
+  );
+  if (!hasCollectorLambdaRetry || !hasCollectorTimeoutRetry) {
+    console.error(
+      'Falha no fallback estático: InvokeCollector sem política de retry/backoff esperada.',
+    );
     process.exit(1);
   }
 

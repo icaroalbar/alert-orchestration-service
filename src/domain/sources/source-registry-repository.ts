@@ -1,4 +1,4 @@
-import type { SourceSchemaV1 } from './source-schema';
+import type { SourceEngine, SourceSchemaV1 } from './source-schema';
 
 export type SourceRegistryRecord = SourceSchemaV1 & {
   schemaVersion: string;
@@ -6,9 +6,22 @@ export type SourceRegistryRecord = SourceSchemaV1 & {
   updatedAt: string;
 };
 
+export interface ListSourceRegistryParams {
+  limit: number;
+  nextToken?: string;
+  active?: boolean;
+  engine?: SourceEngine;
+}
+
+export interface ListSourceRegistryResult {
+  items: SourceRegistryRecord[];
+  nextToken: string | null;
+}
+
 export interface SourceRegistryRepository {
   create(source: SourceRegistryRecord): Promise<void>;
   getById(sourceId: string): Promise<SourceRegistryRecord | null>;
+  list(params: ListSourceRegistryParams): Promise<ListSourceRegistryResult>;
   update(params: {
     sourceId: string;
     source: SourceRegistryRecord;
@@ -27,5 +40,12 @@ export class SourceVersionConflictError extends Error {
   constructor(sourceId: string) {
     super(`Source "${sourceId}" version conflict.`);
     this.name = 'SourceVersionConflictError';
+  }
+}
+
+export class SourcePaginationTokenError extends Error {
+  constructor(message = 'Invalid pagination token.') {
+    super(message);
+    this.name = 'SourcePaginationTokenError';
   }
 }

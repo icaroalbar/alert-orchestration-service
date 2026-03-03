@@ -4,20 +4,30 @@ import {
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
+  ScanCommand,
 } from '@aws-sdk/client-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 
 import {
+  SourcePaginationTokenError,
   SourceAlreadyExistsError,
   SourceVersionConflictError,
+  type ListSourceRegistryParams,
+  type ListSourceRegistryResult,
   type SourceRegistryRecord,
   type SourceRegistryRepository,
 } from '../../domain/sources/source-registry-repository';
-import { validateSourceSchemaV1 } from '../../domain/sources/source-schema';
+import { type SourceEngine, validateSourceSchemaV1 } from '../../domain/sources/source-schema';
 
 export interface DynamoDbSourceRegistryRepositoryParams {
   tableName: string;
   client?: DynamoDBClient;
+}
+
+interface ListTokenPayload {
+  offset: number;
+  active?: boolean;
+  engine?: SourceEngine;
 }
 
 const isConditionalCheckFailed = (error: unknown): boolean => {
@@ -30,6 +40,87 @@ const isConditionalCheckFailed = (error: unknown): boolean => {
   }
 
   return false;
+};
+
+const encodeListToken = (payload: ListTokenPayload): string =>
+  Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');
+
+const decodeListToken = (token: string): ListTokenPayload => {
+  try {
+    const parsed = JSON.parse(Buffer.from(token, 'base64url').toString('utf-8')) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new SourcePaginationTokenError();
+    }
+
+    const record = parsed as Record<string, unknown>;
+    if (!Number.isInteger(record.offset) || (record.offset as number) < 0) {
+      throw new SourcePaginationTokenError();
+    }
+
+    const active =
+      record.active === undefined
+        ? undefined
+        : typeof record.active === 'boolean'
+          ? record.active
+          : null;
+    if (active === null) {
+      throw new SourcePaginationTokenError();
+    }
+
+    const engine =
+      record.engine === undefined
+        ? undefined
+        : record.engine === 'postgres' || record.engine === 'mysql'
+          ? record.engine
+          : null;
+    if (engine === null) {
+      throw new SourcePaginationTokenError();
+    }
+
+    return {
+      offset: record.offset as number,
+      active,
+      engine,
+    };
+  } catch (error) {
+    if (error instanceof SourcePaginationTokenError) {
+      throw error;
+    }
+
+    throw new SourcePaginationTokenError();
+  }
+};
+
+const areFiltersEqual = (token: ListTokenPayload, params: ListSourceRegistryParams): boolean =>
+  token.active === params.active && token.engine === params.engine;
+
+const buildScanFilter = (
+  params: ListSourceRegistryParams,
+): {
+  FilterExpression?: string;
+  ExpressionAttributeValues?: Record<string, AttributeValue>;
+} => {
+  const expressions: string[] = [];
+  const values: Record<string, AttributeValue> = {};
+
+  if (params.active !== undefined) {
+    expressions.push('active = :active');
+    values[':active'] = { S: params.active ? 'true' : 'false' };
+  }
+
+  if (params.engine !== undefined) {
+    expressions.push('engine = :engine');
+    values[':engine'] = { S: params.engine };
+  }
+
+  if (expressions.length === 0) {
+    return {};
+  }
+
+  return {
+    FilterExpression: expressions.join(' AND '),
+    ExpressionAttributeValues: values,
+  };
 };
 
 const toDynamoItem = (source: SourceRegistryRecord): Record<string, unknown> => ({
@@ -145,6 +236,50 @@ export function createDynamoDbSourceRegistryRepository({
       }
 
       return toSourceRegistryRecord(result.Item);
+    },
+    async list(params: ListSourceRegistryParams): Promise<ListSourceRegistryResult> {
+      const tokenPayload = params.nextToken ? decodeListToken(params.nextToken) : undefined;
+      const offset = tokenPayload?.offset ?? 0;
+      if (tokenPayload && !areFiltersEqual(tokenPayload, params)) {
+        throw new SourcePaginationTokenError('Pagination token does not match provided filters.');
+      }
+
+      const filter = buildScanFilter(params);
+      const items: SourceRegistryRecord[] = [];
+      let lastEvaluatedKey: Record<string, AttributeValue> | undefined;
+
+      do {
+        const result = await client.send(
+          new ScanCommand({
+            TableName: resolvedTableName,
+            ExclusiveStartKey: lastEvaluatedKey,
+            ...filter,
+          }),
+        );
+
+        if (result.Items) {
+          items.push(...result.Items.map((item) => toSourceRegistryRecord(item)));
+        }
+
+        lastEvaluatedKey = result.LastEvaluatedKey;
+      } while (lastEvaluatedKey);
+
+      const sorted = items.sort((left, right) => left.sourceId.localeCompare(right.sourceId));
+      const pageItems = sorted.slice(offset, offset + params.limit);
+      const nextOffset = offset + pageItems.length;
+      const nextToken =
+        nextOffset < sorted.length
+          ? encodeListToken({
+              offset: nextOffset,
+              active: params.active,
+              engine: params.engine,
+            })
+          : null;
+
+      return {
+        items: pageItems,
+        nextToken,
+      };
     },
     async update({
       sourceId,

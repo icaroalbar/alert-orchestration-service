@@ -21,8 +21,11 @@
 ```text
 src/
   handlers/
+    create-source.ts
   domain/
+    scheduler/
     sources/
   infra/
+    sources/
   shared/
 ```

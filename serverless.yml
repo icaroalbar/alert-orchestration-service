@@ -50,11 +50,13 @@ custom:
   naming:
     prefix: ${self:service}-${self:provider.stage}
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
+    createSourceFunctionName: ${self:custom.naming.prefix}-create-source
     orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration
     orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule
     orchestrationLogGroupName: /aws/vendedlogs/states/${self:custom.naming.orchestrationStateMachineName}
     orchestrationDashboardName: ${self:custom.naming.prefix}-orchestration-observability
     schedulerRoleName: ${self:custom.naming.prefix}-scheduler-role
+    sourceRegistryApiRoleName: ${self:custom.naming.prefix}-source-registry-api-role
     stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role
     collectorRoleName: ${self:custom.naming.prefix}-collector-role
     salesforceConsumerRoleName: ${self:custom.naming.prefix}-salesforce-consumer-role
@@ -136,6 +138,20 @@ functions:
       Fn::GetAtt:
         - CollectorExecutionRole
         - Arn
+  createSource:
+    name: ${self:custom.naming.createSourceFunctionName}
+    handler: dist/handlers/create-source.handler
+    description: Endpoint POST para registro de novas fontes no plugin registry.
+    memorySize: 256
+    timeout: 30
+    role:
+      Fn::GetAtt:
+        - SourceRegistryApiExecutionRole
+        - Arn
+    events:
+      - httpApi:
+          method: post
+          path: /sources
 
 stepFunctions:
   stateMachines:
@@ -171,6 +187,11 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:custom.naming.schedulerFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    CreateSourceLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.createSourceFunctionName}
         RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
     MainOrchestrationStateMachineLogGroup:
       Type: AWS::Logs::LogGroup
@@ -318,6 +339,39 @@ resources:
                     - sns:Publish
                   Resource:
                     - Ref: ClientEventsTopic
+    SourceRegistryApiExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.naming.sourceRegistryApiRoleName}
+        Description: Role da API de fontes com privilegio minimo para criacao na tabela sources.
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:custom.naming.prefix}-source-registry-api-dynamodb-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: CreateSource
+                  Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - SourcesTable
+                        - Arn
+                - Sid: WriteCreateSourceLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.createSourceFunctionName}:*
     SalesforceConsumerExecutionRole:
       Type: AWS::IAM::Role
       Properties:
@@ -662,6 +716,14 @@ resources:
           - Arn
       Export:
         Name: ${self:custom.naming.prefix}-collector-execution-role-arn
+    SourceRegistryApiExecutionRoleArn:
+      Description: ARN da role de execucao da API de cadastro de fontes.
+      Value:
+        Fn::GetAtt:
+          - SourceRegistryApiExecutionRole
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-source-registry-api-execution-role-arn
     SalesforceConsumerExecutionRoleArn:
       Description: ARN da role reservada para a consumidora Salesforce.
       Value:

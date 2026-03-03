@@ -30,6 +30,7 @@ const staticFallback = () => {
     'lambda: ${self:custom.stages.${self:provider.stage}.tracing}',
     'SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}',
     'CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}',
+    'MAP_MAX_CONCURRENCY: ${self:custom.stages.${self:provider.stage}.mapMaxConcurrency}',
     'CLIENT_EVENTS_TOPIC_ARN:',
     'SALESFORCE_INTEGRATION_QUEUE_URL:',
     'SALESFORCE_INTEGRATION_QUEUE_ARN:',
@@ -92,6 +93,9 @@ const staticFallback = () => {
     'integrationDlqMessageRetentionSeconds: 1209600',
     'salesforceQueueMaxReceiveCount: 5',
     'hubspotQueueMaxReceiveCount: 5',
+    'mapMaxConcurrency: 2',
+    'mapMaxConcurrency: 5',
+    'mapMaxConcurrency: 10',
     'SourcesTable:',
     'CursorsTable:',
     'ClientEventsTopic:',
@@ -187,6 +191,26 @@ const staticFallback = () => {
     for (const stateName of missingStates) {
       console.error(`- Estado ausente: ${stateName}`);
     }
+    process.exit(1);
+  }
+
+  const normalizeSchedulerOutput = states.NormalizeSchedulerOutput ?? {};
+  const schedulerParams = normalizeSchedulerOutput.Parameters?.scheduler ?? {};
+  if (schedulerParams['maxConcurrency.$'] !== '$.schedulerResult.maxConcurrency') {
+    console.error('Falha no fallback estático: NormalizeSchedulerOutput sem maxConcurrency.');
+    process.exit(1);
+  }
+
+  const processEligibleSources = states.ProcessEligibleSources ?? {};
+  if (processEligibleSources.MaxConcurrencyPath !== '$.scheduler.maxConcurrency') {
+    console.error('Falha no fallback estático: Map sem MaxConcurrencyPath esperado.');
+    process.exit(1);
+  }
+
+  const buildExecutionOutput = states.BuildExecutionOutput ?? {};
+  const summaryParams = buildExecutionOutput.Parameters?.summary ?? {};
+  if (summaryParams['maxConcurrency.$'] !== '$.scheduler.maxConcurrency') {
+    console.error('Falha no fallback estático: summary sem maxConcurrency.');
     process.exit(1);
   }
 

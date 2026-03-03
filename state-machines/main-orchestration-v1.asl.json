@@ -46,6 +46,7 @@
         "scheduler": {
           "sourceIds.$": "$.schedulerResult.sourceIds",
           "generatedAt.$": "$.schedulerResult.generatedAt",
+          "maxConcurrency.$": "$.schedulerResult.maxConcurrency",
           "eligibleSources.$": "States.ArrayLength($.schedulerResult.sourceIds)"
         }
       },
@@ -55,6 +56,7 @@
     "ProcessEligibleSources": {
       "Type": "Map",
       "ItemsPath": "$.scheduler.sourceIds",
+      "MaxConcurrencyPath": "$.scheduler.maxConcurrency",
       "Parameters": {
         "sourceId.$": "$$.Map.Item.Value",
         "meta.$": "$.meta"
@@ -99,6 +101,7 @@
           "processedSources.$": "States.ArrayLength($.collectorResults)",
           "eligibleSources.$": "$.scheduler.eligibleSources",
           "generatedAt.$": "$.scheduler.generatedAt",
+          "maxConcurrency.$": "$.scheduler.maxConcurrency",
           "schedulerStatus": "SUCCEEDED"
         }
       },

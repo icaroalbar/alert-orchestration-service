@@ -74,6 +74,14 @@ Payload esperado na execução:
 
 - Finaliza execução com saída padronizada da versão v1.
 
+## Cobertura de teste de falha parcial
+
+- O teste unitário `tests/unit/state-machines/main-orchestration-v1.test.ts` inclui cenário com múltiplas fontes e falha em subset.
+- A validação automatiza o contrato de saída final (`results` e `summary`) para garantir:
+  - preservação de itens `SUCCEEDED` e `FAILED` na mesma execução;
+  - consistência entre `summary.eligibleSources` e `summary.processedSources`;
+  - rastreabilidade por `sourceId`, `error` e `cause` para itens falhos.
+
 ## Versionamento
 
 - Versão atual: `v1`.

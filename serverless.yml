@@ -28,6 +28,18 @@ provider:
       Fn::GetAtt:
         - HubspotIntegrationQueue
         - Arn
+    SALESFORCE_INTEGRATION_DLQ_URL:
+      Ref: SalesforceIntegrationDlq
+    SALESFORCE_INTEGRATION_DLQ_ARN:
+      Fn::GetAtt:
+        - SalesforceIntegrationDlq
+        - Arn
+    HUBSPOT_INTEGRATION_DLQ_URL:
+      Ref: HubspotIntegrationDlq
+    HUBSPOT_INTEGRATION_DLQ_ARN:
+      Fn::GetAtt:
+        - HubspotIntegrationDlq
+        - Arn
   stackTags:
     Service: ${self:service}
     Stage: ${self:provider.stage}
@@ -47,6 +59,11 @@ custom:
       salesforceQueueName: ${self:service}-dev-salesforce-events
       hubspotQueueName: ${self:service}-dev-hubspot-events
       integrationQueueMessageRetentionSeconds: 1209600
+      salesforceDlqName: ${self:service}-dev-salesforce-events-dlq
+      hubspotDlqName: ${self:service}-dev-hubspot-events-dlq
+      integrationDlqMessageRetentionSeconds: 1209600
+      salesforceQueueMaxReceiveCount: 5
+      hubspotQueueMaxReceiveCount: 5
     stg:
       region: us-east-1
       logRetentionInDays: 14
@@ -57,6 +74,11 @@ custom:
       salesforceQueueName: ${self:service}-stg-salesforce-events
       hubspotQueueName: ${self:service}-stg-hubspot-events
       integrationQueueMessageRetentionSeconds: 1209600
+      salesforceDlqName: ${self:service}-stg-salesforce-events-dlq
+      hubspotDlqName: ${self:service}-stg-hubspot-events-dlq
+      integrationDlqMessageRetentionSeconds: 1209600
+      salesforceQueueMaxReceiveCount: 5
+      hubspotQueueMaxReceiveCount: 5
     prod:
       region: us-east-1
       logRetentionInDays: 30
@@ -67,6 +89,11 @@ custom:
       salesforceQueueName: ${self:service}-prod-salesforce-events
       hubspotQueueName: ${self:service}-prod-hubspot-events
       integrationQueueMessageRetentionSeconds: 1209600
+      salesforceDlqName: ${self:service}-prod-salesforce-events-dlq
+      hubspotDlqName: ${self:service}-prod-hubspot-events-dlq
+      integrationDlqMessageRetentionSeconds: 1209600
+      salesforceQueueMaxReceiveCount: 5
+      hubspotQueueMaxReceiveCount: 5
 
 plugins:
   - serverless-step-functions
@@ -165,6 +192,12 @@ resources:
         MessageRetentionPeriod: ${self:custom.stages.${self:provider.stage}.integrationQueueMessageRetentionSeconds}
         VisibilityTimeout: 60
         ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - SalesforceIntegrationDlq
+              - Arn
+          maxReceiveCount: ${self:custom.stages.${self:provider.stage}.salesforceQueueMaxReceiveCount}
         Tags:
           - Key: Service
             Value: ${self:service}
@@ -172,6 +205,20 @@ resources:
             Value: ${self:provider.stage}
           - Key: Integration
             Value: salesforce
+    SalesforceIntegrationDlq:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.stages.${self:provider.stage}.salesforceDlqName}
+        MessageRetentionPeriod: ${self:custom.stages.${self:provider.stage}.integrationDlqMessageRetentionSeconds}
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+          - Key: Integration
+            Value: salesforce
+          - Key: QueueType
+            Value: dlq
     HubspotIntegrationQueue:
       Type: AWS::SQS::Queue
       Properties:
@@ -179,6 +226,12 @@ resources:
         MessageRetentionPeriod: ${self:custom.stages.${self:provider.stage}.integrationQueueMessageRetentionSeconds}
         VisibilityTimeout: 60
         ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - HubspotIntegrationDlq
+              - Arn
+          maxReceiveCount: ${self:custom.stages.${self:provider.stage}.hubspotQueueMaxReceiveCount}
         Tags:
           - Key: Service
             Value: ${self:service}
@@ -186,6 +239,20 @@ resources:
             Value: ${self:provider.stage}
           - Key: Integration
             Value: hubspot
+    HubspotIntegrationDlq:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.stages.${self:provider.stage}.hubspotDlqName}
+        MessageRetentionPeriod: ${self:custom.stages.${self:provider.stage}.integrationDlqMessageRetentionSeconds}
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+          - Key: Integration
+            Value: hubspot
+          - Key: QueueType
+            Value: dlq
   Outputs:
     ClientEventsTopicArn:
       Description: ARN do topico SNS de eventos de clientes.
@@ -227,3 +294,31 @@ resources:
           - Arn
       Export:
         Name: ${self:custom.naming.prefix}-hubspot-integration-queue-arn
+    SalesforceIntegrationDlqUrl:
+      Description: URL da DLQ SQS da integracao Salesforce.
+      Value:
+        Ref: SalesforceIntegrationDlq
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-integration-dlq-url
+    SalesforceIntegrationDlqArn:
+      Description: ARN da DLQ SQS da integracao Salesforce.
+      Value:
+        Fn::GetAtt:
+          - SalesforceIntegrationDlq
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-integration-dlq-arn
+    HubspotIntegrationDlqUrl:
+      Description: URL da DLQ SQS da integracao HubSpot.
+      Value:
+        Ref: HubspotIntegrationDlq
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-integration-dlq-url
+    HubspotIntegrationDlqArn:
+      Description: ARN da DLQ SQS da integracao HubSpot.
+      Value:
+        Fn::GetAtt:
+          - HubspotIntegrationDlq
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-integration-dlq-arn

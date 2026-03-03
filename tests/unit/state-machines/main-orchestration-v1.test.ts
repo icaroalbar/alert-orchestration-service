@@ -16,6 +16,61 @@ const loadDefinition = (): JsonObject => {
   return JSON.parse(readFileSync(filePath, 'utf8')) as JsonObject;
 };
 
+const asArray = (value: unknown): unknown[] => {
+  expect(Array.isArray(value)).toBe(true);
+  return value as unknown[];
+};
+
+const readJsonPath = (input: JsonObject, path: string): unknown => {
+  expect(path.startsWith('$.')).toBe(true);
+
+  const segments = path.slice(2).split('.');
+  let current: unknown = input;
+
+  for (const segment of segments) {
+    expect(current).toBeDefined();
+    expect(current).not.toBeNull();
+    expect(typeof current).toBe('object');
+    current = (current as JsonObject)[segment];
+  }
+
+  return current;
+};
+
+const evaluateExpression = (expression: string, input: JsonObject): unknown => {
+  const arrayLengthExpression = /^States\.ArrayLength\((\$\.[^)]+)\)$/.exec(expression);
+  if (arrayLengthExpression) {
+    const list = asArray(readJsonPath(input, arrayLengthExpression[1]));
+    return list.length;
+  }
+
+  return readJsonPath(input, expression);
+};
+
+const materializeParameters = (template: unknown, input: JsonObject): unknown => {
+  if (Array.isArray(template)) {
+    return template.map((entry) => materializeParameters(entry, input));
+  }
+
+  if (template && typeof template === 'object') {
+    const output: JsonObject = {};
+
+    for (const [key, value] of Object.entries(template)) {
+      if (key.endsWith('.$')) {
+        expect(typeof value).toBe('string');
+        output[key.slice(0, -2)] = evaluateExpression(value as string, input);
+        continue;
+      }
+
+      output[key] = materializeParameters(value, input);
+    }
+
+    return output;
+  }
+
+  return template;
+};
+
 describe('main-orchestration-v1.asl.json', () => {
   it('define fluxo principal com contratos explícitos por estado', () => {
     const definition = loadDefinition();
@@ -191,5 +246,83 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(schedulerFailed.Cause).toBe('Scheduler task failed before Map state execution.');
 
     expect(done.Type).toBe('Succeed');
+  });
+
+  it('preserva sucesso parcial ao materializar resultado final com falha em subset de fontes', () => {
+    const definition = loadDefinition();
+    const states = asObject(definition.States);
+    const processEligibleSources = asObject(states.ProcessEligibleSources);
+    const buildExecutionOutput = asObject(states.BuildExecutionOutput);
+    const iteratorStates = asObject(asObject(processEligibleSources.Iterator).States);
+    const buildItemSuccessResult = asObject(iteratorStates.BuildItemSuccessResult);
+    const buildItemFailureResult = asObject(iteratorStates.BuildItemFailureResult);
+
+    const buildItemSuccessParameters = asObject(buildItemSuccessResult.Parameters);
+    const buildItemFailureParameters = asObject(buildItemFailureResult.Parameters);
+    const buildExecutionOutputParameters = asObject(buildExecutionOutput.Parameters);
+
+    const sourceAResult = asObject(
+      materializeParameters(buildItemSuccessParameters, {
+        sourceId: 'source-a',
+        collectorResult: {
+          processedAt: '2026-03-03T00:00:00.000Z',
+          recordsSent: 12,
+        },
+      }),
+    );
+    const sourceBResult = asObject(
+      materializeParameters(buildItemFailureParameters, {
+        sourceId: 'source-b',
+        collectorError: {
+          Error: 'CollectorTimeout',
+          Cause: 'Connection timeout while reading source-b',
+        },
+      }),
+    );
+    const sourceCResult = asObject(
+      materializeParameters(buildItemSuccessParameters, {
+        sourceId: 'source-c',
+        collectorResult: {
+          processedAt: '2026-03-03T00:00:02.000Z',
+          recordsSent: 4,
+        },
+      }),
+    );
+
+    const executionOutput = asObject(
+      materializeParameters(buildExecutionOutputParameters, {
+        meta: {
+          executionId: 'exec-123',
+          stage: 'dev',
+        },
+        scheduler: {
+          sourceIds: ['source-a', 'source-b', 'source-c'],
+          eligibleSources: 3,
+          generatedAt: '2026-03-03T00:00:00.000Z',
+          maxConcurrency: 5,
+        },
+        collectorResults: [sourceAResult, sourceBResult, sourceCResult],
+      }),
+    );
+
+    const sources = asArray(executionOutput.sources);
+    expect(sources).toEqual(['source-a', 'source-b', 'source-c']);
+
+    const results = asArray(executionOutput.results).map((entry) => asObject(entry));
+    expect(results).toHaveLength(3);
+    expect(results.filter((entry) => entry.status === 'SUCCEEDED')).toHaveLength(2);
+    expect(results.filter((entry) => entry.status === 'FAILED')).toHaveLength(1);
+
+    const failedResult = results.find((entry) => entry.sourceId === 'source-b');
+    expect(failedResult).toBeDefined();
+    expect(failedResult?.status).toBe('FAILED');
+    expect(failedResult?.error).toBe('CollectorTimeout');
+    expect(failedResult?.cause).toContain('source-b');
+
+    const summary = asObject(executionOutput.summary);
+    expect(summary.eligibleSources).toBe(3);
+    expect(summary.processedSources).toBe(3);
+    expect(summary.schedulerStatus).toBe('SUCCEEDED');
+    expect(summary.maxConcurrency).toBe(5);
   });
 });

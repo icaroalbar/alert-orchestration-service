@@ -1,5 +1,8 @@
 Closes #<issue_number>
 
+> Obrigatório: substitua `<issue_number>` por uma issue real (ex.: `Closes #93`).
+> Também são aceitos `Fixes #<issue>` e `Resolves #<issue>`.
+
 ---
 
 ## 🎯 Objetivo

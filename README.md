@@ -82,6 +82,13 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Salesforce DLQ: `${service}-${stage}-salesforce-events-dlq`
   - HubSpot DLQ: `${service}-${stage}-hubspot-events-dlq`
 - Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por integração.
+- Subscription SNS -> SQS explícita para fan-out em ambas as integrações:
+  - `SalesforceIntegrationSubscription` conectando `ClientEventsTopic` em `SalesforceIntegrationQueue`.
+  - `HubspotIntegrationSubscription` conectando `ClientEventsTopic` em `HubspotIntegrationQueue`.
+- Policy mínima nas filas de integração (`IntegrationQueuesPolicy`) permitindo apenas:
+  - `Principal: sns.amazonaws.com`
+  - `Action: sqs:SendMessage`
+  - `Condition: ArnEquals aws:SourceArn = ClientEventsTopic`
 - URLs e ARNs das filas expostos por outputs/exports e variáveis de ambiente:
   - `SALESFORCE_INTEGRATION_QUEUE_URL`
   - `SALESFORCE_INTEGRATION_QUEUE_ARN`
@@ -91,6 +98,9 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - `SALESFORCE_INTEGRATION_DLQ_ARN`
   - `HUBSPOT_INTEGRATION_DLQ_URL`
   - `HUBSPOT_INTEGRATION_DLQ_ARN`
+- ARNs das subscriptions SNS -> SQS expostos por outputs/exports:
+  - `SalesforceIntegrationSubscriptionArn`
+  - `HubspotIntegrationSubscriptionArn`
 
 ### Validação por stage
 

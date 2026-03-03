@@ -51,6 +51,9 @@ Payload esperado na execução:
 - Ação: itera cada `sourceId` e invoca `CollectorLambdaFunction`.
 - Retry com backoff exponencial na task `InvokeCollector` com os mesmos limites do `Scheduler`.
 - Catch por item no `InvokeCollector` (`States.ALL`) para registrar falha da fonte sem interromper o `Map`.
+- Publica métricas customizadas por item usando `cloudwatch:PutMetricData` (não bloqueante):
+  - `SourceProcessed` / `SourceFailed` (dimensão `Stage`);
+  - `SourceProcessedBySource` / `SourceFailedBySource` (dimensões `Stage`, `ExecutionId`, `SourceId`).
 - Contrato por item em `collectorResults`:
   - sucesso: `sourceId`, `status=SUCCEEDED`, `processedAt`, `recordsSent`;
   - falha: `sourceId`, `status=FAILED`, `error`, `cause`.
@@ -73,6 +76,25 @@ Payload esperado na execução:
 ### Done (Succeed)
 
 - Finaliza execução com saída padronizada da versão v1.
+
+## Observabilidade da orquestração
+
+- **Logging da SFN**:
+  - `loggingConfig.level = ALL`
+  - `includeExecutionData = true`
+  - Log group dedicado: `${service}-${stage}-orchestration` em `/aws/vendedlogs/states/...`
+- **Tracing da SFN**:
+  - `tracingConfig.enabled` por stage (reuso da flag `tracing` já definida em `custom.stages`).
+- **Métricas de execução (custom namespace)**:
+  - Namespace: `AlertOrchestrationService/Orchestration`
+  - `ExecutionSucceeded`, `ExecutionFailed` (dimensão `Stage`)
+  - `ExecutionSucceededByExecution`, `ExecutionFailedByExecution` (dimensões `Stage`, `ExecutionId`)
+  - `ProcessedSources`, `EligibleSources` (dimensão `Stage`)
+- **Métrica de duração**:
+  - Métrica nativa `AWS/States::ExecutionTime` exposta no dashboard de observabilidade da orquestração.
+- **Rastreabilidade por correlação**:
+  - `meta.executionId` é propagado entre estados e utilizado nas dimensões customizadas.
+  - `sourceId` é mantido por item no `Map` e nas métricas por fonte.
 
 ## Cobertura de teste de falha parcial
 

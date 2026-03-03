@@ -52,6 +52,8 @@ custom:
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
     orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration
     orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule
+    orchestrationLogGroupName: /aws/vendedlogs/states/${self:custom.naming.orchestrationStateMachineName}
+    orchestrationDashboardName: ${self:custom.naming.prefix}-orchestration-observability
     schedulerRoleName: ${self:custom.naming.prefix}-scheduler-role
     stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role
     collectorRoleName: ${self:custom.naming.prefix}-collector-role
@@ -154,6 +156,13 @@ stepFunctions:
         Fn::GetAtt:
           - MainStateMachineExecutionRole
           - Arn
+      tracingConfig:
+        enabled: ${self:custom.stages.${self:provider.stage}.tracing}
+      loggingConfig:
+        level: ALL
+        includeExecutionData: true
+        destinations:
+          - Fn::Sub: ${MainOrchestrationStateMachineLogGroup.Arn}:*
       definition: ${file(./state-machines/main-orchestration-v1.asl.json)}
 
 resources:
@@ -162,6 +171,11 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:custom.naming.schedulerFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    MainOrchestrationStateMachineLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: ${self:custom.naming.orchestrationLogGroupName}
         RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
     SchedulerExecutionRole:
       Type: AWS::IAM::Role
@@ -241,6 +255,26 @@ resources:
                         - CollectorLambdaFunction
                         - Arn
                     - Fn::Sub: ${CollectorLambdaFunction.Arn}:*
+                - Sid: DeliverStepFunctionsExecutionLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogDelivery
+                    - logs:GetLogDelivery
+                    - logs:UpdateLogDelivery
+                    - logs:DeleteLogDelivery
+                    - logs:ListLogDeliveries
+                    - logs:PutResourcePolicy
+                    - logs:DescribeResourcePolicies
+                    - logs:DescribeLogGroups
+                  Resource: '*'
+                - Sid: PublishOrchestrationMetrics
+                  Effect: Allow
+                  Action:
+                    - cloudwatch:PutMetricData
+                  Resource: '*'
+                  Condition:
+                    StringEquals:
+                      cloudwatch:namespace: AlertOrchestrationService/Orchestration
     CollectorExecutionRole:
       Type: AWS::IAM::Role
       Properties:
@@ -526,6 +560,72 @@ resources:
             - HubspotIntegrationQueue
             - Arn
         RawMessageDelivery: true
+    MainOrchestrationObservabilityDashboard:
+      Type: AWS::CloudWatch::Dashboard
+      Properties:
+        DashboardName: ${self:custom.naming.orchestrationDashboardName}
+        DashboardBody:
+          Fn::Sub: |
+            {
+              "widgets": [
+                {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 0,
+                  "width": 24,
+                  "height": 6,
+                  "properties": {
+                    "title": "State Machine executions (success x failure)",
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "period": 300,
+                    "metrics": [
+                      ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}", {"stat": "Sum", "label": "Succeeded"}],
+                      [".", "ExecutionsFailed", ".", ".", {"stat": "Sum", "label": "Failed"}]
+                    ]
+                  }
+                },
+                {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 6,
+                  "width": 24,
+                  "height": 6,
+                  "properties": {
+                    "title": "State Machine duration (ExecutionTime)",
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "period": 300,
+                    "metrics": [
+                      ["AWS/States", "ExecutionTime", "StateMachineArn", "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}", {"stat": "Average", "label": "Avg duration (ms)"}],
+                      [".", "ExecutionTime", ".", ".", {"stat": "p95", "label": "p95 duration (ms)"}]
+                    ]
+                  }
+                },
+                {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 12,
+                  "width": 24,
+                  "height": 6,
+                  "properties": {
+                    "title": "Orchestration custom metrics",
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "period": 300,
+                    "metrics": [
+                      ["AlertOrchestrationService/Orchestration", "ExecutionSucceeded", "Stage", "${self:provider.stage}", {"stat": "Sum"}],
+                      [".", "ExecutionFailed", "Stage", "${self:provider.stage}", {"stat": "Sum"}],
+                      [".", "SourceProcessed", "Stage", "${self:provider.stage}", {"stat": "Sum"}],
+                      [".", "SourceFailed", "Stage", "${self:provider.stage}", {"stat": "Sum"}]
+                    ]
+                  }
+                }
+              ]
+            }
   Outputs:
     MainStateMachineName:
       Description: Nome da state machine principal.
@@ -658,3 +758,13 @@ resources:
         Ref: HubspotIntegrationSubscription
       Export:
         Name: ${self:custom.naming.prefix}-hubspot-integration-subscription-arn
+    MainOrchestrationStateMachineLogGroupName:
+      Description: Nome do log group da state machine principal.
+      Value: ${self:custom.naming.orchestrationLogGroupName}
+      Export:
+        Name: ${self:custom.naming.prefix}-main-state-machine-log-group-name
+    MainOrchestrationObservabilityDashboardName:
+      Description: Nome do dashboard de observabilidade da orquestracao.
+      Value: ${self:custom.naming.orchestrationDashboardName}
+      Export:
+        Name: ${self:custom.naming.prefix}-orchestration-observability-dashboard-name

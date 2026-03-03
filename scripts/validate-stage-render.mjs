@@ -43,6 +43,8 @@ const staticFallback = () => {
     'schedulerFunctionName: ${self:custom.naming.prefix}-scheduler',
     'orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration',
     'orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule',
+    'orchestrationLogGroupName: /aws/vendedlogs/states/${self:custom.naming.orchestrationStateMachineName}',
+    'orchestrationDashboardName: ${self:custom.naming.prefix}-orchestration-observability',
     'schedulerRoleName: ${self:custom.naming.prefix}-scheduler-role',
     'stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role',
     'collectorRoleName: ${self:custom.naming.prefix}-collector-role',
@@ -50,6 +52,12 @@ const staticFallback = () => {
     'hubspotConsumerRoleName: ${self:custom.naming.prefix}-hubspot-consumer-role',
     'name: ${self:custom.naming.orchestrationStateMachineName}',
     'name: ${self:custom.naming.orchestrationScheduleRuleName}',
+    'tracingConfig:',
+    'enabled: ${self:custom.stages.${self:provider.stage}.tracing}',
+    'loggingConfig:',
+    'level: ALL',
+    'includeExecutionData: true',
+    'Fn::Sub: ${MainOrchestrationStateMachineLogGroup.Arn}:*',
     'definition: ${file(./state-machines/main-orchestration-v1.asl.json)}',
     'description: Disparo global da orquestracao principal via EventBridge.',
     'rate: ${self:custom.stages.${self:provider.stage}.orchestrationScheduleExpression}',
@@ -63,6 +71,20 @@ const staticFallback = () => {
     'MainStateMachineExecutionRole',
     'SchedulerExecutionRole',
     'CollectorExecutionRole',
+    'MainOrchestrationStateMachineLogGroup:',
+    'LogGroupName: ${self:custom.naming.orchestrationLogGroupName}',
+    'Sid: DeliverStepFunctionsExecutionLogs',
+    'logs:CreateLogDelivery',
+    'logs:GetLogDelivery',
+    'logs:UpdateLogDelivery',
+    'logs:DeleteLogDelivery',
+    'logs:ListLogDeliveries',
+    'logs:PutResourcePolicy',
+    'logs:DescribeResourcePolicies',
+    'logs:DescribeLogGroups',
+    'Sid: PublishOrchestrationMetrics',
+    'cloudwatch:PutMetricData',
+    'cloudwatch:namespace: AlertOrchestrationService/Orchestration',
     'SalesforceConsumerExecutionRole',
     'HubspotConsumerExecutionRole',
     'sourcesTableName: ${self:service}-dev-sources',
@@ -107,6 +129,11 @@ const staticFallback = () => {
     'IntegrationQueuesPolicy:',
     'SalesforceIntegrationSubscription:',
     'HubspotIntegrationSubscription:',
+    'MainOrchestrationObservabilityDashboard:',
+    'Type: AWS::CloudWatch::Dashboard',
+    'DashboardName: ${self:custom.naming.orchestrationDashboardName}',
+    'ExecutionTime',
+    'AlertOrchestrationService/Orchestration',
     'SchedulerExecutionRoleArn:',
     'MainStateMachineExecutionRoleArn:',
     'CollectorExecutionRoleArn:',
@@ -124,6 +151,8 @@ const staticFallback = () => {
     'HubspotIntegrationDlqArn:',
     'SalesforceIntegrationSubscriptionArn:',
     'HubspotIntegrationSubscriptionArn:',
+    'MainOrchestrationStateMachineLogGroupName:',
+    'MainOrchestrationObservabilityDashboardName:',
     'MainStateMachineName:',
     'MainStateMachineArn:',
     'Name: ${self:custom.naming.prefix}-main-state-machine-name',
@@ -192,6 +221,8 @@ const staticFallback = () => {
     'Scheduler',
     'ProcessEligibleSources',
     'BuildExecutionOutput',
+    'PublishExecutionSuccessMetric',
+    'PublishExecutionFailureMetric',
     'Done',
   ];
   const missingStates = requiredStates.filter((stateName) => !(stateName in states));
@@ -223,6 +254,31 @@ const staticFallback = () => {
   const summaryParams = buildExecutionOutput.Parameters?.summary ?? {};
   if (summaryParams['maxConcurrency.$'] !== '$.scheduler.maxConcurrency') {
     console.error('Falha no fallback estático: summary sem maxConcurrency.');
+    process.exit(1);
+  }
+  if (buildExecutionOutput.Next !== 'PublishExecutionSuccessMetric') {
+    console.error(
+      'Falha no fallback estático: BuildExecutionOutput deve encadear PublishExecutionSuccessMetric.',
+    );
+    process.exit(1);
+  }
+
+  const buildSchedulerFailureOutput = states.BuildSchedulerFailureOutput ?? {};
+  if (buildSchedulerFailureOutput.Next !== 'PublishExecutionFailureMetric') {
+    console.error(
+      'Falha no fallback estático: BuildSchedulerFailureOutput deve encadear PublishExecutionFailureMetric.',
+    );
+    process.exit(1);
+  }
+
+  const hasPutMetricDataResource = (state) =>
+    state?.Type === 'Task' &&
+    state?.Resource === 'arn:aws:states:::aws-sdk:cloudwatch:putMetricData';
+  if (
+    !hasPutMetricDataResource(states.PublishExecutionSuccessMetric) ||
+    !hasPutMetricDataResource(states.PublishExecutionFailureMetric)
+  ) {
+    console.error('Falha no fallback estático: tasks de métrica de execução ausentes no ASL.');
     process.exit(1);
   }
 
@@ -287,11 +343,23 @@ const staticFallback = () => {
 
   const buildItemFailureResult =
     states.ProcessEligibleSources?.Iterator?.States?.BuildItemFailureResult ?? {};
+  const publishItemSuccessMetric =
+    states.ProcessEligibleSources?.Iterator?.States?.PublishItemSuccessMetric ?? {};
+  const publishItemFailureMetric =
+    states.ProcessEligibleSources?.Iterator?.States?.PublishItemFailureMetric ?? {};
+  if (
+    !hasPutMetricDataResource(publishItemSuccessMetric) ||
+    !hasPutMetricDataResource(publishItemFailureMetric)
+  ) {
+    console.error('Falha no fallback estático: tasks de métrica por item ausentes no Map.');
+    process.exit(1);
+  }
+
   if (
     buildItemFailureResult?.Type !== 'Pass' ||
-    buildItemFailureResult?.Parameters?.status !== 'FAILED' ||
-    buildItemFailureResult?.Parameters?.['error.$'] !== '$.collectorError.Error' ||
-    buildItemFailureResult?.Parameters?.['cause.$'] !== '$.collectorError.Cause'
+    buildItemFailureResult?.Parameters?.result?.status !== 'FAILED' ||
+    buildItemFailureResult?.Parameters?.result?.['error.$'] !== '$.collectorError.Error' ||
+    buildItemFailureResult?.Parameters?.result?.['cause.$'] !== '$.collectorError.Cause'
   ) {
     console.error(
       'Falha no fallback estático: BuildItemFailureResult sem contrato esperado de erro.',

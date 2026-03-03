@@ -83,7 +83,9 @@ describe('main-orchestration-v1.asl.json', () => {
     const normalizeSchedulerOutput = asObject(states.NormalizeSchedulerOutput);
     const processEligibleSources = asObject(states.ProcessEligibleSources);
     const buildExecutionOutput = asObject(states.BuildExecutionOutput);
+    const publishExecutionSuccessMetric = asObject(states.PublishExecutionSuccessMetric);
     const buildSchedulerFailureOutput = asObject(states.BuildSchedulerFailureOutput);
+    const publishExecutionFailureMetric = asObject(states.PublishExecutionFailureMetric);
     const schedulerFailed = asObject(states.SchedulerFailed);
     const done = asObject(states.Done);
 
@@ -161,7 +163,11 @@ describe('main-orchestration-v1.asl.json', () => {
     const iteratorStates = asObject(iterator.States);
     const invokeCollector = asObject(iteratorStates.InvokeCollector);
     const buildItemSuccessResult = asObject(iteratorStates.BuildItemSuccessResult);
+    const publishItemSuccessMetric = asObject(iteratorStates.PublishItemSuccessMetric);
+    const returnItemSuccessResult = asObject(iteratorStates.ReturnItemSuccessResult);
     const buildItemFailureResult = asObject(iteratorStates.BuildItemFailureResult);
+    const publishItemFailureMetric = asObject(iteratorStates.PublishItemFailureMetric);
+    const returnItemFailureResult = asObject(iteratorStates.ReturnItemFailureResult);
 
     expect(invokeCollector.Type).toBe('Task');
     expect(invokeCollector.ResultPath).toBe('$.collectorResult');
@@ -198,24 +204,82 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(collectorCatchEntry.Next).toBe('BuildItemFailureResult');
 
     expect(buildItemSuccessResult.Type).toBe('Pass');
-    expect(buildItemSuccessResult.End).toBe(true);
+    expect(buildItemSuccessResult.Next).toBe('PublishItemSuccessMetric');
     const buildItemSuccessParameters = asObject(buildItemSuccessResult.Parameters);
-    expect(buildItemSuccessParameters['sourceId.$']).toBe('$.sourceId');
-    expect(buildItemSuccessParameters.status).toBe('SUCCEEDED');
-    expect(buildItemSuccessParameters['processedAt.$']).toBe('$.collectorResult.processedAt');
-    expect(buildItemSuccessParameters['recordsSent.$']).toBe('$.collectorResult.recordsSent');
+    const buildItemSuccessPayload = asObject(buildItemSuccessParameters.result);
+    expect(buildItemSuccessPayload['sourceId.$']).toBe('$.sourceId');
+    expect(buildItemSuccessPayload.status).toBe('SUCCEEDED');
+    expect(buildItemSuccessPayload['processedAt.$']).toBe('$.collectorResult.processedAt');
+    expect(buildItemSuccessPayload['recordsSent.$']).toBe('$.collectorResult.recordsSent');
+    const buildItemSuccessMetric = asObject(buildItemSuccessParameters.metric);
+    expect(buildItemSuccessMetric['stage.$']).toBe('$.meta.stage');
+    expect(buildItemSuccessMetric['executionId.$']).toBe('$.meta.executionId');
+    expect(buildItemSuccessMetric['sourceId.$']).toBe('$.sourceId');
+
+    expect(publishItemSuccessMetric.Type).toBe('Task');
+    expect(publishItemSuccessMetric.Resource).toBe(
+      'arn:aws:states:::aws-sdk:cloudwatch:putMetricData',
+    );
+    expect(publishItemSuccessMetric.Next).toBe('ReturnItemSuccessResult');
+    const publishItemSuccessParams = asObject(publishItemSuccessMetric.Parameters);
+    expect(publishItemSuccessParams.Namespace).toBe('AlertOrchestrationService/Orchestration');
+    const publishItemSuccessMetricData = asArray(publishItemSuccessParams.MetricData);
+    expect(publishItemSuccessMetricData).toHaveLength(2);
+    const publishItemSuccessCatch = asArray(publishItemSuccessMetric.Catch);
+    expect(publishItemSuccessCatch).toHaveLength(1);
+    const publishItemSuccessCatchEntry = asObject(publishItemSuccessCatch[0]);
+    expect(publishItemSuccessCatchEntry.ErrorEquals).toEqual(['States.ALL']);
+    expect(publishItemSuccessCatchEntry.ResultPath).toBe('$.metricPublishError');
+    expect(publishItemSuccessCatchEntry.Next).toBe('ReturnItemSuccessResult');
+
+    expect(returnItemSuccessResult.Type).toBe('Pass');
+    expect(returnItemSuccessResult.End).toBe(true);
+    const returnItemSuccessParameters = asObject(returnItemSuccessResult.Parameters);
+    expect(returnItemSuccessParameters['sourceId.$']).toBe('$.result.sourceId');
+    expect(returnItemSuccessParameters['status.$']).toBe('$.result.status');
+    expect(returnItemSuccessParameters['processedAt.$']).toBe('$.result.processedAt');
+    expect(returnItemSuccessParameters['recordsSent.$']).toBe('$.result.recordsSent');
 
     expect(buildItemFailureResult.Type).toBe('Pass');
-    expect(buildItemFailureResult.End).toBe(true);
+    expect(buildItemFailureResult.Next).toBe('PublishItemFailureMetric');
     const buildItemFailureParameters = asObject(buildItemFailureResult.Parameters);
-    expect(buildItemFailureParameters['sourceId.$']).toBe('$.sourceId');
-    expect(buildItemFailureParameters.status).toBe('FAILED');
-    expect(buildItemFailureParameters['error.$']).toBe('$.collectorError.Error');
-    expect(buildItemFailureParameters['cause.$']).toBe('$.collectorError.Cause');
+    const buildItemFailurePayload = asObject(buildItemFailureParameters.result);
+    expect(buildItemFailurePayload['sourceId.$']).toBe('$.sourceId');
+    expect(buildItemFailurePayload.status).toBe('FAILED');
+    expect(buildItemFailurePayload['error.$']).toBe('$.collectorError.Error');
+    expect(buildItemFailurePayload['cause.$']).toBe('$.collectorError.Cause');
+    const buildItemFailureMetric = asObject(buildItemFailureParameters.metric);
+    expect(buildItemFailureMetric['stage.$']).toBe('$.meta.stage');
+    expect(buildItemFailureMetric['executionId.$']).toBe('$.meta.executionId');
+    expect(buildItemFailureMetric['sourceId.$']).toBe('$.sourceId');
+
+    expect(publishItemFailureMetric.Type).toBe('Task');
+    expect(publishItemFailureMetric.Resource).toBe(
+      'arn:aws:states:::aws-sdk:cloudwatch:putMetricData',
+    );
+    expect(publishItemFailureMetric.Next).toBe('ReturnItemFailureResult');
+    const publishItemFailureParams = asObject(publishItemFailureMetric.Parameters);
+    expect(publishItemFailureParams.Namespace).toBe('AlertOrchestrationService/Orchestration');
+    const publishItemFailureMetricData = asArray(publishItemFailureParams.MetricData);
+    expect(publishItemFailureMetricData).toHaveLength(2);
+    const publishItemFailureCatch = asArray(publishItemFailureMetric.Catch);
+    expect(publishItemFailureCatch).toHaveLength(1);
+    const publishItemFailureCatchEntry = asObject(publishItemFailureCatch[0]);
+    expect(publishItemFailureCatchEntry.ErrorEquals).toEqual(['States.ALL']);
+    expect(publishItemFailureCatchEntry.ResultPath).toBe('$.metricPublishError');
+    expect(publishItemFailureCatchEntry.Next).toBe('ReturnItemFailureResult');
+
+    expect(returnItemFailureResult.Type).toBe('Pass');
+    expect(returnItemFailureResult.End).toBe(true);
+    const returnItemFailureParameters = asObject(returnItemFailureResult.Parameters);
+    expect(returnItemFailureParameters['sourceId.$']).toBe('$.result.sourceId');
+    expect(returnItemFailureParameters['status.$']).toBe('$.result.status');
+    expect(returnItemFailureParameters['error.$']).toBe('$.result.error');
+    expect(returnItemFailureParameters['cause.$']).toBe('$.result.cause');
 
     expect(buildExecutionOutput.Type).toBe('Pass');
     expect(buildExecutionOutput.ResultPath).toBe('$');
-    expect(buildExecutionOutput.Next).toBe('Done');
+    expect(buildExecutionOutput.Next).toBe('PublishExecutionSuccessMetric');
     const outputParameters = asObject(buildExecutionOutput.Parameters);
     expect(outputParameters['meta.$']).toBe('$.meta');
     expect(outputParameters['sources.$']).toBe('$.scheduler.sourceIds');
@@ -227,9 +291,25 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(summary['maxConcurrency.$']).toBe('$.scheduler.maxConcurrency');
     expect(summary.schedulerStatus).toBe('SUCCEEDED');
 
+    expect(publishExecutionSuccessMetric.Type).toBe('Task');
+    expect(publishExecutionSuccessMetric.Resource).toBe(
+      'arn:aws:states:::aws-sdk:cloudwatch:putMetricData',
+    );
+    expect(publishExecutionSuccessMetric.Next).toBe('Done');
+    const publishExecutionSuccessParams = asObject(publishExecutionSuccessMetric.Parameters);
+    expect(publishExecutionSuccessParams.Namespace).toBe('AlertOrchestrationService/Orchestration');
+    const publishExecutionSuccessMetricData = asArray(publishExecutionSuccessParams.MetricData);
+    expect(publishExecutionSuccessMetricData).toHaveLength(4);
+    const publishExecutionSuccessCatch = asArray(publishExecutionSuccessMetric.Catch);
+    expect(publishExecutionSuccessCatch).toHaveLength(1);
+    const publishExecutionSuccessCatchEntry = asObject(publishExecutionSuccessCatch[0]);
+    expect(publishExecutionSuccessCatchEntry.ErrorEquals).toEqual(['States.ALL']);
+    expect(publishExecutionSuccessCatchEntry.ResultPath).toBe('$.metricPublishError');
+    expect(publishExecutionSuccessCatchEntry.Next).toBe('Done');
+
     expect(buildSchedulerFailureOutput.Type).toBe('Pass');
     expect(buildSchedulerFailureOutput.ResultPath).toBe('$');
-    expect(buildSchedulerFailureOutput.Next).toBe('SchedulerFailed');
+    expect(buildSchedulerFailureOutput.Next).toBe('PublishExecutionFailureMetric');
     const buildSchedulerFailureParameters = asObject(buildSchedulerFailureOutput.Parameters);
     expect(buildSchedulerFailureParameters['meta.$']).toBe('$.meta');
     expect(buildSchedulerFailureParameters.sources).toEqual([]);
@@ -240,6 +320,22 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(failureSummary.schedulerStatus).toBe('FAILED');
     expect(failureSummary['error.$']).toBe('$.schedulerError.Error');
     expect(failureSummary['cause.$']).toBe('$.schedulerError.Cause');
+
+    expect(publishExecutionFailureMetric.Type).toBe('Task');
+    expect(publishExecutionFailureMetric.Resource).toBe(
+      'arn:aws:states:::aws-sdk:cloudwatch:putMetricData',
+    );
+    expect(publishExecutionFailureMetric.Next).toBe('SchedulerFailed');
+    const publishExecutionFailureParams = asObject(publishExecutionFailureMetric.Parameters);
+    expect(publishExecutionFailureParams.Namespace).toBe('AlertOrchestrationService/Orchestration');
+    const publishExecutionFailureMetricData = asArray(publishExecutionFailureParams.MetricData);
+    expect(publishExecutionFailureMetricData).toHaveLength(2);
+    const publishExecutionFailureCatch = asArray(publishExecutionFailureMetric.Catch);
+    expect(publishExecutionFailureCatch).toHaveLength(1);
+    const publishExecutionFailureCatchEntry = asObject(publishExecutionFailureCatch[0]);
+    expect(publishExecutionFailureCatchEntry.ErrorEquals).toEqual(['States.ALL']);
+    expect(publishExecutionFailureCatchEntry.ResultPath).toBe('$.metricPublishError');
+    expect(publishExecutionFailureCatchEntry.Next).toBe('SchedulerFailed');
 
     expect(schedulerFailed.Type).toBe('Fail');
     expect(schedulerFailed.Error).toBe('SchedulerStepFailed');
@@ -255,38 +351,63 @@ describe('main-orchestration-v1.asl.json', () => {
     const buildExecutionOutput = asObject(states.BuildExecutionOutput);
     const iteratorStates = asObject(asObject(processEligibleSources.Iterator).States);
     const buildItemSuccessResult = asObject(iteratorStates.BuildItemSuccessResult);
+    const returnItemSuccessResult = asObject(iteratorStates.ReturnItemSuccessResult);
     const buildItemFailureResult = asObject(iteratorStates.BuildItemFailureResult);
+    const returnItemFailureResult = asObject(iteratorStates.ReturnItemFailureResult);
 
     const buildItemSuccessParameters = asObject(buildItemSuccessResult.Parameters);
+    const returnItemSuccessParameters = asObject(returnItemSuccessResult.Parameters);
     const buildItemFailureParameters = asObject(buildItemFailureResult.Parameters);
+    const returnItemFailureParameters = asObject(returnItemFailureResult.Parameters);
     const buildExecutionOutputParameters = asObject(buildExecutionOutput.Parameters);
 
-    const sourceAResult = asObject(
+    const sourceARawResult = asObject(
       materializeParameters(buildItemSuccessParameters, {
         sourceId: 'source-a',
+        meta: {
+          stage: 'dev',
+          executionId: 'exec-123',
+        },
         collectorResult: {
           processedAt: '2026-03-03T00:00:00.000Z',
           recordsSent: 12,
         },
       }),
     );
-    const sourceBResult = asObject(
+    const sourceAResult = asObject(
+      materializeParameters(returnItemSuccessParameters, sourceARawResult),
+    );
+    const sourceBRawResult = asObject(
       materializeParameters(buildItemFailureParameters, {
         sourceId: 'source-b',
+        meta: {
+          stage: 'dev',
+          executionId: 'exec-123',
+        },
         collectorError: {
           Error: 'CollectorTimeout',
           Cause: 'Connection timeout while reading source-b',
         },
       }),
     );
-    const sourceCResult = asObject(
+    const sourceBResult = asObject(
+      materializeParameters(returnItemFailureParameters, sourceBRawResult),
+    );
+    const sourceCRawResult = asObject(
       materializeParameters(buildItemSuccessParameters, {
         sourceId: 'source-c',
+        meta: {
+          stage: 'dev',
+          executionId: 'exec-123',
+        },
         collectorResult: {
           processedAt: '2026-03-03T00:00:02.000Z',
           recordsSent: 4,
         },
       }),
+    );
+    const sourceCResult = asObject(
+      materializeParameters(returnItemSuccessParameters, sourceCRawResult),
     );
 
     const executionOutput = asObject(

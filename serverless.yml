@@ -52,6 +52,7 @@ custom:
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
     createSourceFunctionName: ${self:custom.naming.prefix}-create-source
     updateSourceFunctionName: ${self:custom.naming.prefix}-update-source
+    deleteSourceFunctionName: ${self:custom.naming.prefix}-delete-source
     listSourceFunctionName: ${self:custom.naming.prefix}-list-sources
     orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration
     orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule
@@ -168,6 +169,20 @@ functions:
       - httpApi:
           method: patch
           path: /sources/{id}
+  deleteSource:
+    name: ${self:custom.naming.deleteSourceFunctionName}
+    handler: dist/handlers/delete-source.handler
+    description: Endpoint DELETE para desativacao logica de fontes no plugin registry.
+    memorySize: 256
+    timeout: 30
+    role:
+      Fn::GetAtt:
+        - SourceRegistryApiExecutionRole
+        - Arn
+    events:
+      - httpApi:
+          method: delete
+          path: /sources/{id}
   listSource:
     name: ${self:custom.naming.listSourceFunctionName}
     handler: dist/handlers/list-sources.handler
@@ -227,6 +242,11 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:custom.naming.updateSourceFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    DeleteSourceLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.deleteSourceFunctionName}
         RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
     ListSourceLogGroup:
       Type: AWS::Logs::LogGroup
@@ -383,7 +403,7 @@ resources:
       Type: AWS::IAM::Role
       Properties:
         RoleName: ${self:custom.naming.sourceRegistryApiRoleName}
-        Description: Role da API de fontes com privilegio minimo para criacao e atualizacao na tabela sources.
+        Description: Role da API de fontes com privilegio minimo para CRUD da tabela sources.
         AssumeRolePolicyDocument:
           Version: '2012-10-17'
           Statement:
@@ -415,6 +435,7 @@ resources:
                   Resource:
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.createSourceFunctionName}:*
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.updateSourceFunctionName}:*
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.deleteSourceFunctionName}:*
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.listSourceFunctionName}:*
     SalesforceConsumerExecutionRole:
       Type: AWS::IAM::Role

@@ -107,6 +107,10 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Retry específico para `States.Timeout`:
     - `IntervalSeconds: 5`, `MaxAttempts: 2`, `BackoffRate: 2`.
   - Guardrail de resiliência: número máximo de tentativas explícito para evitar loop infinito.
+- Catch por item no `Map State` para tolerância a falha parcial:
+  - `InvokeCollector` trata `States.ALL` no escopo da fonte.
+  - Falhas de uma fonte não interrompem o processamento das demais.
+  - Resultado final inclui status por item (`SUCCEEDED` ou `FAILED`) com rastreabilidade de erro (`error` e `cause`).
 - Policy mínima nas filas de integração (`IntegrationQueuesPolicy`) permitindo apenas:
   - `Principal: sns.amazonaws.com`
   - `Action: sqs:SendMessage`

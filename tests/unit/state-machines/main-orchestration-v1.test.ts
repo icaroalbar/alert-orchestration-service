@@ -105,11 +105,12 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(iterator.StartAt).toBe('InvokeCollector');
     const iteratorStates = asObject(iterator.States);
     const invokeCollector = asObject(iteratorStates.InvokeCollector);
-    const buildItemResult = asObject(iteratorStates.BuildItemResult);
+    const buildItemSuccessResult = asObject(iteratorStates.BuildItemSuccessResult);
+    const buildItemFailureResult = asObject(iteratorStates.BuildItemFailureResult);
 
     expect(invokeCollector.Type).toBe('Task');
     expect(invokeCollector.ResultPath).toBe('$.collectorResult');
-    expect(invokeCollector.Next).toBe('BuildItemResult');
+    expect(invokeCollector.Next).toBe('BuildItemSuccessResult');
     const invokeCollectorResource = asObject(invokeCollector.Resource);
     expect(invokeCollectorResource['Fn::GetAtt']).toEqual(['CollectorLambdaFunction', 'Arn']);
     const invokeCollectorParameters = asObject(invokeCollector.Parameters);
@@ -133,14 +134,29 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(collectorTimeoutRetry.IntervalSeconds).toBe(5);
     expect(collectorTimeoutRetry.MaxAttempts).toBe(2);
     expect(collectorTimeoutRetry.BackoffRate).toBe(2);
+    const invokeCollectorCatch = invokeCollector.Catch as unknown[];
+    expect(Array.isArray(invokeCollectorCatch)).toBe(true);
+    expect(invokeCollectorCatch).toHaveLength(1);
+    const collectorCatchEntry = asObject(invokeCollectorCatch[0]);
+    expect(collectorCatchEntry.ErrorEquals).toEqual(['States.ALL']);
+    expect(collectorCatchEntry.ResultPath).toBe('$.collectorError');
+    expect(collectorCatchEntry.Next).toBe('BuildItemFailureResult');
 
-    expect(buildItemResult.Type).toBe('Pass');
-    expect(buildItemResult.End).toBe(true);
-    const buildItemResultParameters = asObject(buildItemResult.Parameters);
-    expect(buildItemResultParameters['sourceId.$']).toBe('$.sourceId');
-    expect(buildItemResultParameters.status).toBe('SUCCEEDED');
-    expect(buildItemResultParameters['processedAt.$']).toBe('$.collectorResult.processedAt');
-    expect(buildItemResultParameters['recordsSent.$']).toBe('$.collectorResult.recordsSent');
+    expect(buildItemSuccessResult.Type).toBe('Pass');
+    expect(buildItemSuccessResult.End).toBe(true);
+    const buildItemSuccessParameters = asObject(buildItemSuccessResult.Parameters);
+    expect(buildItemSuccessParameters['sourceId.$']).toBe('$.sourceId');
+    expect(buildItemSuccessParameters.status).toBe('SUCCEEDED');
+    expect(buildItemSuccessParameters['processedAt.$']).toBe('$.collectorResult.processedAt');
+    expect(buildItemSuccessParameters['recordsSent.$']).toBe('$.collectorResult.recordsSent');
+
+    expect(buildItemFailureResult.Type).toBe('Pass');
+    expect(buildItemFailureResult.End).toBe(true);
+    const buildItemFailureParameters = asObject(buildItemFailureResult.Parameters);
+    expect(buildItemFailureParameters['sourceId.$']).toBe('$.sourceId');
+    expect(buildItemFailureParameters.status).toBe('FAILED');
+    expect(buildItemFailureParameters['error.$']).toBe('$.collectorError.Error');
+    expect(buildItemFailureParameters['cause.$']).toBe('$.collectorError.Cause');
 
     expect(buildExecutionOutput.Type).toBe('Pass');
     expect(buildExecutionOutput.ResultPath).toBe('$');

@@ -253,6 +253,58 @@ resources:
             Value: hubspot
           - Key: QueueType
             Value: dlq
+    IntegrationQueuesPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: SalesforceIntegrationQueue
+          - Ref: HubspotIntegrationQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: AllowClientEventsTopicToSend
+              Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - Fn::GetAtt:
+                    - SalesforceIntegrationQueue
+                    - Arn
+                - Fn::GetAtt:
+                    - HubspotIntegrationQueue
+                    - Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn:
+                    Ref: ClientEventsTopic
+    SalesforceIntegrationSubscription:
+      Type: AWS::SNS::Subscription
+      DependsOn:
+        - IntegrationQueuesPolicy
+      Properties:
+        TopicArn:
+          Ref: ClientEventsTopic
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt:
+            - SalesforceIntegrationQueue
+            - Arn
+        RawMessageDelivery: true
+    HubspotIntegrationSubscription:
+      Type: AWS::SNS::Subscription
+      DependsOn:
+        - IntegrationQueuesPolicy
+      Properties:
+        TopicArn:
+          Ref: ClientEventsTopic
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt:
+            - HubspotIntegrationQueue
+            - Arn
+        RawMessageDelivery: true
   Outputs:
     ClientEventsTopicArn:
       Description: ARN do topico SNS de eventos de clientes.
@@ -322,3 +374,15 @@ resources:
           - Arn
       Export:
         Name: ${self:custom.naming.prefix}-hubspot-integration-dlq-arn
+    SalesforceIntegrationSubscriptionArn:
+      Description: ARN da subscription SNS para a fila SQS da integracao Salesforce.
+      Value:
+        Ref: SalesforceIntegrationSubscription
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-integration-subscription-arn
+    HubspotIntegrationSubscriptionArn:
+      Description: ARN da subscription SNS para a fila SQS da integracao HubSpot.
+      Value:
+        Ref: HubspotIntegrationSubscription
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-integration-subscription-arn

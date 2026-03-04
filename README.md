@@ -87,6 +87,18 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por integração.
 - Alarmes de DLQ por integração com métrica `AWS/SQS::ApproximateNumberOfMessagesVisible` e limiar por stage (`salesforceDlqAlarmThreshold` e `hubspotDlqAlarmThreshold`).
 - Ações de notificação dos alarmes direcionadas para tópico SNS operacional `${service}-${stage}-dlq-alarms`.
+- Alarmes operacionais de ingestão e integração conectados ao tópico SNS `${service}-${stage}-operational-alarms`:
+  - Erros de Lambda (`Errors`): scheduler, coletora, consumidora Salesforce e consumidora HubSpot.
+  - Latência p95 de Lambda (`Duration`): scheduler, coletora, consumidora Salesforce e consumidora HubSpot.
+  - Falha, timeout e latência p95 da state machine principal (`ExecutionsFailed`, `ExecutionsTimedOut`, `ExecutionTime`).
+- Limiares operacionais por stage versionados em `custom.stages.*`:
+  - `lambdaErrorAlarmThreshold`
+  - `schedulerDurationAlarmThresholdMs`
+  - `collectorDurationAlarmThresholdMs`
+  - `consumerDurationAlarmThresholdMs`
+  - `orchestrationFailureAlarmThreshold`
+  - `orchestrationTimeoutAlarmThreshold`
+  - `orchestrationDurationP95AlarmThresholdMs`
 - Métricas customizadas de runtime publicadas no namespace `AlertOrchestrationService/Runtime` (`METRICS_NAMESPACE`):
   - Coletora por `SourceId`: `CollectorRecordsCollected`, `CollectorRecordsPersisted`, `CollectorRecordsRejected`, `CollectorExecutionSuccess`, `CollectorExecutionFailure`, `CollectorExecutionLatencyMs`.
   - Entrega de integrações por `IntegrationId` + `SourceId`: `IntegrationDeliveryAttempt`, `IntegrationDeliverySuccess`, `IntegrationDeliveryFailure`, `IntegrationDeliveryLatencyMs`.
@@ -172,6 +184,19 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - `SalesforceIntegrationDlqVisibleMessagesAlarmArn`
   - `HubspotIntegrationDlqVisibleMessagesAlarmName`
   - `HubspotIntegrationDlqVisibleMessagesAlarmArn`
+- Canal e alarmes operacionais de ingestão/integração expostos por outputs/exports:
+  - `OperationalAlarmTopicArn`
+  - `SchedulerErrorsAlarmName`
+  - `SchedulerDurationP95HighAlarmName`
+  - `CollectorErrorsAlarmName`
+  - `CollectorDurationP95HighAlarmName`
+  - `SalesforceConsumerErrorsAlarmName`
+  - `SalesforceConsumerDurationP95HighAlarmName`
+  - `HubspotConsumerErrorsAlarmName`
+  - `HubspotConsumerDurationP95HighAlarmName`
+  - `MainOrchestrationExecutionsFailedAlarmName`
+  - `MainOrchestrationExecutionsTimedOutAlarmName`
+  - `MainOrchestrationExecutionTimeP95HighAlarmName`
 
 ### IAM mínimo por função
 
@@ -224,6 +249,8 @@ npm run dlq:reprocess -- --integration all --dry-run --since 2026-03-04T00:00:00
 ```
 
 Guia operacional completo: `docs/integrations/dlq-reprocessing.md`.
+
+Playbook de resposta para alarmes operacionais (ingestão + integrações + Step Functions): `docs/observability/operational-alarms-playbook.md`.
 
 ## Ambiente de testes (isolado)
 

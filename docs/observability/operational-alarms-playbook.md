@@ -2,6 +2,29 @@
 
 Este playbook cobre a primeira resposta para alarmes operacionais de ingestao e integracoes.
 
+## Responsaveis e tempo de resposta
+
+Matriz operacional minima por severidade:
+
+- `SEV-1` (ingestao parada em `prod` ou falha generalizada em integracoes criticas):
+  - reconhecimento do incidente: ate 5 minutos
+  - dono da resposta inicial: On-call da plataforma
+  - escalonamento: Tech Lead + Product/Operacoes em ate 10 minutos
+- `SEV-2` (degradacao parcial com backlog crescente ou falha recorrente em uma integracao):
+  - reconhecimento do incidente: ate 10 minutos
+  - dono da resposta inicial: On-call da plataforma
+  - escalonamento: Tech Lead em ate 20 minutos
+- `SEV-3` (impacto baixo, sem perda de dados e com contorno operacional):
+  - reconhecimento do incidente: ate 30 minutos
+  - dono da resposta inicial: Engenharia de plataforma (janela comercial)
+  - escalonamento: sob demanda
+
+Responsabilidades durante o incidente:
+
+- Incident Commander (On-call): coordena triagem, decisao de rollback e comunicacao de status.
+- Responsavel tecnico (engenheiro da feature afetada): executa mitigacao tecnica.
+- Comunicacao operacional (Product/Operacoes): atualiza stakeholders sobre impacto e ETA.
+
 ## Escopo de alarmes
 
 - Lambda errors (ingestao e integracoes):
@@ -36,6 +59,23 @@ Todos os alarmes notificam o topico SNS por stage:
 5. Se houver aculo em filas, verificar DLQ e aplicar triagem com:
    - `docs/integrations/dlq-reprocessing.md`
 
+## Triagem DLQ e replay (checklist rapido)
+
+1. Confirmar integracao impactada (`salesforce`, `hubspot` ou ambas) e janela do incidente.
+2. Rodar simulacao sem mutacao:
+   - `npm run dlq:reprocess -- --integration <salesforce|hubspot|all> --since <ISO> --until <ISO> --dry-run`
+3. Validar no resultado:
+   - quantidade elegivel para replay
+   - principais `failure reasons`
+   - risco de replay fora da janela do incidente
+4. Executar replay efetivo com escopo reduzido:
+   - `npm run dlq:reprocess -- --integration <...> --since <ISO> --until <ISO> --max-messages <N>`
+5. Confirmar sucesso:
+   - reducao de mensagens visiveis na DLQ
+   - aumento de consumo na fila principal
+   - estabilizacao dos alarmes de erro/latencia
+6. Anexar o arquivo de auditoria gerado (`.codex/runs/dlq-reprocess-<batch>.json`) no registro do incidente.
+
 ## Diagnostico por tipo
 
 ### Errors (Lambda)
@@ -58,6 +98,7 @@ Todos os alarmes notificam o topico SNS por stage:
 
 ## Pos-incidente
 
-1. Registrar causa raiz e acao corretiva.
-2. Criar issue de follow-up quando houver lacuna estrutural.
-3. Atualizar este playbook se a resposta operacional mudar.
+1. Registrar causa raiz, timeline e acao corretiva.
+2. Definir owner e prazo do follow-up tecnico (issue obrigatoria quando houver lacuna estrutural).
+3. Revisar se alarme, limiar ou playbook precisam ajuste.
+4. Publicar status final com impacto, mitigacao aplicada e pendencias.

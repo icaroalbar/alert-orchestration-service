@@ -47,3 +47,5 @@ Replayed messages receive extra attributes:
 - Prefer `--dry-run` before effective replay in production.
 - Replay deletes from DLQ only after successful send to target queue.
 - Use narrow `--since/--until` windows during incidents to reduce blast radius.
+- Incident workflow and severities are documented in `docs/observability/operational-alarms-playbook.md`.
+- During incident response, attach the generated audit JSON to the incident timeline.

@@ -113,6 +113,11 @@ custom:
       salesforceDlqName: ${self:service}-dev-salesforce-events-dlq
       hubspotDlqName: ${self:service}-dev-hubspot-events-dlq
       integrationDlqMessageRetentionSeconds: 1209600
+      dlqAlarmTopicName: ${self:service}-dev-dlq-alarms
+      salesforceDlqAlarmThreshold: 1
+      hubspotDlqAlarmThreshold: 1
+      dlqAlarmPeriodSeconds: 60
+      dlqAlarmEvaluationPeriods: 1
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
       mapMaxConcurrency: 2
@@ -135,6 +140,11 @@ custom:
       salesforceDlqName: ${self:service}-stg-salesforce-events-dlq
       hubspotDlqName: ${self:service}-stg-hubspot-events-dlq
       integrationDlqMessageRetentionSeconds: 1209600
+      dlqAlarmTopicName: ${self:service}-stg-dlq-alarms
+      salesforceDlqAlarmThreshold: 1
+      hubspotDlqAlarmThreshold: 1
+      dlqAlarmPeriodSeconds: 60
+      dlqAlarmEvaluationPeriods: 1
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
       mapMaxConcurrency: 5
@@ -157,6 +167,11 @@ custom:
       salesforceDlqName: ${self:service}-prod-salesforce-events-dlq
       hubspotDlqName: ${self:service}-prod-hubspot-events-dlq
       integrationDlqMessageRetentionSeconds: 1209600
+      dlqAlarmTopicName: ${self:service}-prod-dlq-alarms
+      salesforceDlqAlarmThreshold: 5
+      hubspotDlqAlarmThreshold: 5
+      dlqAlarmPeriodSeconds: 60
+      dlqAlarmEvaluationPeriods: 1
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
       mapMaxConcurrency: 10
@@ -836,6 +851,64 @@ resources:
             - HubspotIntegrationQueue
             - Arn
         RawMessageDelivery: true
+    DlqAlarmTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.stages.${self:provider.stage}.dlqAlarmTopicName}
+        KmsMasterKeyId: alias/aws/sns
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+          - Key: Scope
+            Value: dlq-alarms
+    SalesforceIntegrationDlqVisibleMessagesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-salesforce-dlq-visible-messages
+        AlarmDescription: Alarm when Salesforce DLQ accumulates visible messages above threshold.
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt:
+                - SalesforceIntegrationDlq
+                - QueueName
+        Statistic: Maximum
+        Period: ${self:custom.stages.${self:provider.stage}.dlqAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.dlqAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.salesforceDlqAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: DlqAlarmTopic
+        OKActions:
+          - Ref: DlqAlarmTopic
+    HubspotIntegrationDlqVisibleMessagesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-hubspot-dlq-visible-messages
+        AlarmDescription: Alarm when HubSpot DLQ accumulates visible messages above threshold.
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt:
+                - HubspotIntegrationDlq
+                - QueueName
+        Statistic: Maximum
+        Period: ${self:custom.stages.${self:provider.stage}.dlqAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.dlqAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.hubspotDlqAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: DlqAlarmTopic
+        OKActions:
+          - Ref: DlqAlarmTopic
     MainOrchestrationObservabilityDashboard:
       Type: AWS::CloudWatch::Dashboard
       Properties:
@@ -1042,6 +1115,40 @@ resources:
         Ref: HubspotIntegrationSubscription
       Export:
         Name: ${self:custom.naming.prefix}-hubspot-integration-subscription-arn
+    DlqAlarmTopicArn:
+      Description: ARN do topico SNS de notificacoes de alarmes de DLQ.
+      Value:
+        Ref: DlqAlarmTopic
+      Export:
+        Name: ${self:custom.naming.prefix}-dlq-alarm-topic-arn
+    SalesforceIntegrationDlqVisibleMessagesAlarmName:
+      Description: Nome do alarme de mensagens visiveis na DLQ Salesforce.
+      Value:
+        Ref: SalesforceIntegrationDlqVisibleMessagesAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-dlq-visible-messages-alarm-name
+    SalesforceIntegrationDlqVisibleMessagesAlarmArn:
+      Description: ARN do alarme de mensagens visiveis na DLQ Salesforce.
+      Value:
+        Fn::GetAtt:
+          - SalesforceIntegrationDlqVisibleMessagesAlarm
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-dlq-visible-messages-alarm-arn
+    HubspotIntegrationDlqVisibleMessagesAlarmName:
+      Description: Nome do alarme de mensagens visiveis na DLQ HubSpot.
+      Value:
+        Ref: HubspotIntegrationDlqVisibleMessagesAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-dlq-visible-messages-alarm-name
+    HubspotIntegrationDlqVisibleMessagesAlarmArn:
+      Description: ARN do alarme de mensagens visiveis na DLQ HubSpot.
+      Value:
+        Fn::GetAtt:
+          - HubspotIntegrationDlqVisibleMessagesAlarm
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-dlq-visible-messages-alarm-arn
     MainOrchestrationStateMachineLogGroupName:
       Description: Nome do log group da state machine principal.
       Value: ${self:custom.naming.orchestrationLogGroupName}

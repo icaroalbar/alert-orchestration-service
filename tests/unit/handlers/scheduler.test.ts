@@ -165,6 +165,46 @@ describe('scheduler handler', () => {
     expect(result.referenceNow).toBe('2026-03-04T09:00:00.000Z');
   });
 
+  it('returns empty sourceIds and hasEligibleSources=false when all reservations conflict', async () => {
+    const repository = new SpySourceRepository(
+      [
+        {
+          items: [
+            {
+              sourceId: 'source-a',
+              nextRunAt: '2026-03-04T09:00:00.000Z',
+              scheduleType: 'interval',
+              intervalMinutes: 5,
+            },
+            {
+              sourceId: 'source-b',
+              nextRunAt: '2026-03-04T09:00:00.000Z',
+              scheduleType: 'interval',
+              intervalMinutes: 5,
+            },
+          ],
+          nextToken: null,
+        },
+      ],
+      [false, false],
+    );
+
+    const handler = createHandler({
+      sourceRepository: repository,
+      now: () => '2026-03-04T09:00:00.000Z',
+      activeSourcesPageSize: 10,
+    });
+
+    const result = await handler();
+
+    expect(result.contractVersion).toBe('scheduler-output.v1');
+    expect(result.sourceIds).toEqual([]);
+    expect(result.eligibleSources).toBe(0);
+    expect(result.hasEligibleSources).toBe(false);
+    expect(result.referenceNow).toBe('2026-03-04T09:00:00.000Z');
+    expect(result.generatedAt).toBe('2026-03-04T09:00:00.000Z');
+  });
+
   it('returns configured max concurrency from environment', async () => {
     process.env.MAP_MAX_CONCURRENCY = '12';
 

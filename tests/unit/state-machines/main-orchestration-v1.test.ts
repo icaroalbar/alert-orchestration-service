@@ -443,4 +443,45 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(summary.schedulerStatus).toBe('SUCCEEDED');
     expect(summary.maxConcurrency).toBe(5);
   });
+
+  it('materializa contrato final quando scheduler nao encontra fontes elegiveis', () => {
+    const definition = loadDefinition();
+    const states = asObject(definition.States);
+    const buildExecutionOutput = asObject(states.BuildExecutionOutput);
+    const buildExecutionOutputParameters = asObject(buildExecutionOutput.Parameters);
+
+    const executionOutput = asObject(
+      materializeParameters(buildExecutionOutputParameters, {
+        meta: {
+          executionId: 'exec-empty',
+          stage: 'dev',
+        },
+        schedulerResult: {
+          sourceIds: [],
+          contractVersion: 'scheduler-output.v1',
+          referenceNow: '2026-03-04T09:00:00.000Z',
+          hasEligibleSources: false,
+          eligibleSources: 0,
+          generatedAt: '2026-03-04T09:00:00.000Z',
+          maxConcurrency: 5,
+        },
+        collectorResults: [],
+      }),
+    );
+
+    const scheduler = asObject(executionOutput.scheduler);
+    const sources = asArray(executionOutput.sources);
+    const results = asArray(executionOutput.results);
+    const summary = asObject(executionOutput.summary);
+
+    expect(scheduler.contractVersion).toBe('scheduler-output.v1');
+    expect(scheduler.referenceNow).toBe('2026-03-04T09:00:00.000Z');
+    expect(scheduler.hasEligibleSources).toBe(false);
+    expect(sources).toEqual([]);
+    expect(results).toEqual([]);
+    expect(summary.eligibleSources).toBe(0);
+    expect(summary.processedSources).toBe(0);
+    expect(summary.schedulerStatus).toBe('SUCCEEDED');
+    expect(summary.maxConcurrency).toBe(5);
+  });
 });

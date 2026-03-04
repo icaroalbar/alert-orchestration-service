@@ -86,6 +86,45 @@ describe('listEligibleSources', () => {
     ]);
   });
 
+  it('includes source when nextRunAt is exactly equal to now and reserves next run for cron schedule', async () => {
+    const repository = new SpySourceRepository([
+      {
+        items: [
+          {
+            sourceId: 'source-cron',
+            nextRunAt: '2026-03-04T09:00:00.000Z',
+            scheduleType: 'cron',
+            cronExpr: '*/5 * * * *',
+          },
+        ],
+        nextToken: null,
+      },
+    ]);
+
+    const result = await listEligibleSources({
+      sourceRepository: repository,
+      pageSize: 10,
+      now: '2026-03-04T09:00:00.000Z',
+    });
+
+    expect(repository.reserveCalls).toEqual([
+      {
+        sourceId: 'source-cron',
+        expectedNextRunAt: '2026-03-04T09:00:00.000Z',
+        nextRunAt: '2026-03-04T09:05:00.000Z',
+        reservedAt: '2026-03-04T09:00:00.000Z',
+      },
+    ]);
+    expect(result).toEqual([
+      {
+        sourceId: 'source-cron',
+        nextRunAt: '2026-03-04T09:00:00.000Z',
+        scheduleType: 'cron',
+        cronExpr: '*/5 * * * *',
+      },
+    ]);
+  });
+
   it('deduplicates repeated sourceIds across pages before reservation', async () => {
     const repository = new SpySourceRepository([
       {

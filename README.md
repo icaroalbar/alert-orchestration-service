@@ -83,6 +83,9 @@ Componentes-chave:
 - `npm run sls:package:stg`
 - `npm run sls:package:prod`
 - `npm run sls:package:all`
+- `npm run sls:deploy:dev`
+- `npm run sls:deploy:stg`
+- `npm run sls:deploy:prod`
 - `npm run dlq:reprocess -- --integration <salesforce|hubspot|all> [--since ISO] [--until ISO] [--max-messages N] [--dry-run]`
 - `npm run validate:stage-render`
 - `npm run validate:stage-package`
@@ -100,6 +103,17 @@ npm run build
 npm run validate:stage-render
 npm run validate:stage-package
 ```
+
+## Deploy por stage (GitHub Actions)
+
+- Workflow: `.github/workflows/deploy.yml`
+- Regras de execucao:
+  - `push` em `develop` -> deploy automatico em `dev`
+  - `push` em `main` -> deploy automatico em `stg`
+  - `workflow_dispatch` -> deploy manual (`dev`, `stg` ou `prod`)
+- `prod` exige confirmacao explicita (`confirm_production=APPROVED`) e uso do environment `prod`.
+- Runbook operacional e rollback:
+  - `docs/deployment/stage-deploy-and-rollback.md`
 
 ## Stages (dev/stg/prod)
 

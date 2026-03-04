@@ -1,0 +1,125 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage de deploy
+        required: true
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+      ref:
+        description: Ref git para deploy manual (branch, tag ou SHA)
+        required: false
+        default: ''
+      confirm_production:
+        description: Para deploy em prod, informe APPROVED
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || (github.ref_name == 'develop' && 'dev' || 'stg') }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-target:
+    name: Resolve stage e ref
+    runs-on: ubuntu-latest
+    outputs:
+      stage: ${{ steps.resolve.outputs.stage }}
+      ref: ${{ steps.resolve.outputs.ref }}
+    steps:
+      - name: Resolver alvo de deploy
+        id: resolve
+        run: |
+          EVENT_NAME="${{ github.event_name }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            STAGE="${{ inputs.stage }}"
+            REF_INPUT="${{ inputs.ref }}"
+            if [ -n "$REF_INPUT" ]; then
+              REF="$REF_INPUT"
+            else
+              REF="${{ github.ref_name }}"
+            fi
+
+            if [ "$STAGE" = "prod" ] && [ "${{ inputs.confirm_production }}" != "APPROVED" ]; then
+              echo "::error::Para deploy em prod, informe confirm_production=APPROVED."
+              exit 1
+            fi
+          elif [ "${{ github.ref_name }}" = "develop" ]; then
+            STAGE="dev"
+            REF="${{ github.sha }}"
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            STAGE="stg"
+            REF="${{ github.sha }}"
+          else
+            echo "::error::Branch nao suportada para deploy automatico: ${{ github.ref_name }}"
+            exit 1
+          fi
+
+          echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy (${{ needs.resolve-target.outputs.stage }})
+    runs-on: ubuntu-latest
+    needs: resolve-target
+    environment: ${{ needs.resolve-target.outputs.stage }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-target.outputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Validar segredos obrigatorios
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
+        run: |
+          missing=0
+          if [ -z "$AWS_DEPLOY_ROLE_ARN" ]; then
+            echo "::error::Secret AWS_DEPLOY_ROLE_ARN nao configurado no environment."
+            missing=1
+          fi
+          if [ -z "$SERVERLESS_ACCESS_KEY" ]; then
+            echo "::error::Secret SERVERLESS_ACCESS_KEY nao configurado no environment."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Configurar credenciais AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Validar render de stage
+        run: npm run validate:stage-render
+
+      - name: Deploy com Serverless
+        env:
+          STAGE: ${{ needs.resolve-target.outputs.stage }}
+          SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
+        run: npm run "sls:deploy:${STAGE}"

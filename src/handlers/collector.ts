@@ -28,6 +28,12 @@ import {
   validateCanonicalCustomerBatch,
   type CanonicalCustomerRejectedRecord,
 } from '../domain/collector/validate-canonical-customer-batch';
+import {
+  createUpsertCustomersBatchClient,
+  type UpsertCustomersBatchClient,
+  type UpsertCustomersBatchHttpClient,
+  type UpsertCustomersBatchRejectedRecord,
+} from '../domain/collector/upsert-customers-batch';
 import { createMySqlQueryExecutorFactory } from '../infra/collector/mysql-query-executor';
 import { createPostgresQueryExecutorFactory } from '../infra/collector/postgres-query-executor';
 import { createDynamoDbCollectorCursorRepository } from '../infra/cursors/dynamodb-collector-cursor-repository';
@@ -68,6 +74,18 @@ const COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_MAX = 120_000;
 const COLLECTOR_DEFAULT_CURSOR_FALLBACK = '1970-01-01T00:00:00.000Z';
 const COLLECTOR_CURSOR_UPDATE_MAX_CONFLICT_RETRIES = 3;
 const NUMERIC_CURSOR_REGEX = /^[-+]?\d+(\.\d+)?$/;
+const OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS_DEFAULT = 5_000;
+const OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS_MIN = 100;
+const OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS_MAX = 60_000;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS_DEFAULT = 3;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS_MIN = 1;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS_MAX = 5;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS_DEFAULT = 200;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS_MIN = 10;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS_MAX = 5_000;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_DEFAULT = 2;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MIN = 1;
+const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MAX = 5;
 
 type PostgresQueryExecutorFactory = (credentials: CollectorSourceCredentials) => PostgresQueryExecutor;
 type MySqlQueryExecutorFactory = (credentials: CollectorSourceCredentials) => MySqlQueryExecutor;
@@ -88,6 +106,8 @@ export interface CollectorResult {
   records: CollectorStandardizedRecord[];
   schemaVersion: string;
   rejectedRecords: CanonicalCustomerRejectedRecord[];
+  persistenceRejectedRecords: UpsertCustomersBatchRejectedRecord[];
+  upsertAttempts: number;
 }
 
 export interface CollectorDependencies {
@@ -101,6 +121,7 @@ export interface CollectorDependencies {
   now: () => string;
   nowMs: () => number;
   sleep: (delayMs: number) => Promise<void>;
+  upsertCustomersBatchClient: UpsertCustomersBatchClient;
   logger: Pick<typeof console, 'info'>;
 }
 
@@ -253,6 +274,53 @@ const resolveDefaultCursorValue = (rawValue: string | undefined): string => {
   }
 
   return normalized;
+};
+
+const resolveOfficialCustomersUpsertTimeoutMs = (rawValue: string | undefined): number =>
+  resolveBoundedIntegerFromEnv({
+    rawValue,
+    envName: 'OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS',
+    min: OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS_MIN,
+    max: OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS_MAX,
+    fallback: OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS_DEFAULT,
+  });
+
+const resolveOfficialCustomersUpsertRetryMaxAttempts = (rawValue: string | undefined): number =>
+  resolveBoundedIntegerFromEnv({
+    rawValue,
+    envName: 'OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS',
+    min: OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS_MIN,
+    max: OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS_MAX,
+    fallback: OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS_DEFAULT,
+  });
+
+const resolveOfficialCustomersUpsertRetryBaseDelayMs = (rawValue: string | undefined): number =>
+  resolveBoundedIntegerFromEnv({
+    rawValue,
+    envName: 'OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS',
+    min: OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS_MIN,
+    max: OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS_MAX,
+    fallback: OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS_DEFAULT,
+  });
+
+const resolveOfficialCustomersUpsertRetryBackoffRate = (rawValue: string | undefined): number => {
+  if (!rawValue) {
+    return OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_DEFAULT;
+  }
+
+  const parsed = Number.parseFloat(rawValue);
+  const isValidNumber = Number.isFinite(parsed);
+  const isInRange =
+    parsed >= OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MIN &&
+    parsed <= OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MAX;
+
+  if (!isValidNumber || !isInRange) {
+    throw new Error(
+      `Invalid OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE="${rawValue}". Expected number between ${OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MIN} and ${OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MAX}.`,
+    );
+  }
+
+  return parsed;
 };
 
 const resolveCursorValue = (
@@ -418,6 +486,32 @@ const persistCollectorCursor = async ({
   }
 };
 
+const createFetchUpsertCustomersBatchHttpClient = (): UpsertCustomersBatchHttpClient => {
+  return async ({ url, timeoutMs, body, headers }) => {
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => {
+      abortController.abort();
+    }, timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+        signal: abortController.signal,
+      });
+
+      return {
+        status: response.status,
+        json: () => response.json(),
+        text: () => response.text(),
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+};
+
 const getDefaultDependencies = (): CollectorDependencies => {
   if (cachedDefaultDependencies) {
     return cachedDefaultDependencies;
@@ -431,6 +525,11 @@ const getDefaultDependencies = (): CollectorDependencies => {
   const cursorsTableName = process.env.CURSORS_TABLE_NAME;
   if (!cursorsTableName || cursorsTableName.trim().length === 0) {
     throw new Error('CURSORS_TABLE_NAME is required.');
+  }
+
+  const officialCustomersUpsertUrl = process.env.OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL;
+  if (!officialCustomersUpsertUrl || officialCustomersUpsertUrl.trim().length === 0) {
+    throw new Error('OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL is required.');
   }
 
   cachedDefaultDependencies = {
@@ -469,6 +568,24 @@ const getDefaultDependencies = (): CollectorDependencies => {
     now: nowIso,
     nowMs: Date.now,
     sleep,
+    upsertCustomersBatchClient: createUpsertCustomersBatchClient({
+      endpointUrl: officialCustomersUpsertUrl,
+      timeoutMs: resolveOfficialCustomersUpsertTimeoutMs(process.env.OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS),
+      retryPolicy: {
+        maxAttempts: resolveOfficialCustomersUpsertRetryMaxAttempts(
+          process.env.OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS,
+        ),
+        baseDelayMs: resolveOfficialCustomersUpsertRetryBaseDelayMs(
+          process.env.OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS,
+        ),
+        backoffRate: resolveOfficialCustomersUpsertRetryBackoffRate(
+          process.env.OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE,
+        ),
+      },
+      httpClient: createFetchUpsertCustomersBatchHttpClient(),
+      nowMs: Date.now,
+      sleep,
+    }),
     logger: console,
   };
 
@@ -487,6 +604,7 @@ export const createHandler =
     now,
     nowMs,
     sleep,
+    upsertCustomersBatchClient,
     logger,
   }: CollectorDependencies) =>
   async (event: CollectorEvent): Promise<CollectorResult> => {
@@ -589,6 +707,24 @@ export const createHandler =
       });
     }
 
+    const correlationId =
+      event?.meta?.executionId?.trim() ??
+      `${sourceId}-${event?.meta?.stage ?? 'unknown'}-${sourceConfiguration.cursorField}`;
+
+    const upsertResult = await upsertCustomersBatchClient({
+      sourceId,
+      correlationId,
+      records: canonicalValidationResult.validRecords,
+    });
+    if (upsertResult.rejectedRecords.length > 0) {
+      logger.info('collector.official_api.partial_rejection', {
+        sourceId,
+        correlationId,
+        rejectedRecordsCount: upsertResult.rejectedRecords.length,
+        attempts: upsertResult.attempts,
+      });
+    }
+
     const processedAt = now();
     const candidateCursor = resolveLatestCursorFromRecords({
       records,
@@ -616,10 +752,12 @@ export const createHandler =
     return {
       sourceId,
       processedAt,
-      recordsSent: canonicalValidationResult.validRecords.length,
-      records: canonicalValidationResult.validRecords,
+      recordsSent: upsertResult.persistedRecords.length,
+      records: upsertResult.persistedRecords,
       schemaVersion: canonicalValidationResult.schemaVersion,
       rejectedRecords: canonicalValidationResult.rejectedRecords,
+      persistenceRejectedRecords: upsertResult.rejectedRecords,
+      upsertAttempts: upsertResult.attempts,
     };
   };
 

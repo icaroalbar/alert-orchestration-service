@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import type { CollectorCursorValue } from '../../../src/domain/collector/collector-cursor-repository';
+import type { CollectorStandardizedRecord } from '../../../src/domain/collector/collect-postgres-records';
 import type { MySqlQueryExecutor } from '../../../src/domain/collector/collect-mysql-records';
 import type { PostgresQueryExecutor } from '../../../src/domain/collector/collect-postgres-records';
 import {
@@ -14,6 +15,7 @@ import {
   type CollectorSecretRetryPolicy,
   type CollectorSourceCredentials,
 } from '../../../src/domain/collector/load-source-credentials';
+import type { UpsertCustomersBatchResult } from '../../../src/domain/collector/upsert-customers-batch';
 import type { SourceRegistryRecord } from '../../../src/domain/sources/source-registry-repository';
 import { createHandler, type CollectorDependencies } from '../../../src/handlers/collector';
 
@@ -154,6 +156,44 @@ class SpyLogger {
   }
 }
 
+class SpyUpsertCustomersBatchClient {
+  public readonly calls: Array<{
+    sourceId: string;
+    correlationId: string;
+    records: readonly CollectorStandardizedRecord[];
+  }> = [];
+
+  constructor(
+    private readonly resultFactory: (
+      records: readonly CollectorStandardizedRecord[],
+    ) => UpsertCustomersBatchResult = (
+      records,
+    ) => ({
+      persistedRecords: [...records],
+      rejectedRecords: [],
+      attempts: 1,
+      durationMs: 30,
+    }),
+  ) {}
+
+  invoke = ({
+    sourceId,
+    correlationId,
+    records,
+  }: {
+    sourceId: string;
+    correlationId: string;
+    records: readonly CollectorStandardizedRecord[];
+  }): Promise<UpsertCustomersBatchResult> => {
+    this.calls.push({
+      sourceId,
+      correlationId,
+      records,
+    });
+    return Promise.resolve(this.resultFactory(records));
+  };
+}
+
 const DEFAULT_SECRET_RETRY_POLICY: CollectorSecretRetryPolicy = {
   maxAttempts: 3,
   baseDelayMs: 10,
@@ -166,6 +206,7 @@ const createCollectorHandler = ({
   secretRepository,
   postgresQueryExecutorFactory,
   mySqlQueryExecutorFactory = new SpyMySqlQueryExecutorFactory([]),
+  upsertCustomersBatchClient = new SpyUpsertCustomersBatchClient(),
   logger,
 }: {
   sourceRegistryRepository: SpySourceRegistryRepository;
@@ -173,6 +214,7 @@ const createCollectorHandler = ({
   secretRepository: SpySecretRepository;
   postgresQueryExecutorFactory: SpyPostgresQueryExecutorFactory;
   mySqlQueryExecutorFactory?: SpyMySqlQueryExecutorFactory;
+  upsertCustomersBatchClient?: SpyUpsertCustomersBatchClient;
   logger?: SpyLogger;
 }) => {
   let nowMsCalls = 0;
@@ -190,6 +232,7 @@ const createCollectorHandler = ({
       return nowMsCalls === 1 ? 1000 : 1030;
     },
     sleep: () => Promise.resolve(),
+    upsertCustomersBatchClient: upsertCustomersBatchClient.invoke,
     logger: logger ?? new SpyLogger(),
   };
 
@@ -256,6 +299,8 @@ describe('collector handler', () => {
     expect(result.recordsSent).toBe(2);
     expect(result.schemaVersion).toBe('1.0.0');
     expect(result.rejectedRecords).toEqual([]);
+    expect(result.persistenceRejectedRecords).toEqual([]);
+    expect(result.upsertAttempts).toBe(1);
     expect(result.records).toEqual([
       {
         id: 10,
@@ -363,6 +408,8 @@ describe('collector handler', () => {
     expect(result.recordsSent).toBe(1);
     expect(result.schemaVersion).toBe('1.0.0');
     expect(result.rejectedRecords).toEqual([]);
+    expect(result.persistenceRejectedRecords).toEqual([]);
+    expect(result.upsertAttempts).toBe(1);
     expect(result.records).toEqual([
       {
         id: 99,
@@ -522,11 +569,13 @@ describe('collector handler', () => {
         updated_at: new Date('2026-03-04T10:11:00.000Z'),
       },
     ]);
+    const upsertClient = new SpyUpsertCustomersBatchClient();
 
     const handler = createCollectorHandler({
       sourceRegistryRepository: repository,
       secretRepository: secrets,
       postgresQueryExecutorFactory: postgresFactory,
+      upsertCustomersBatchClient: upsertClient,
     });
 
     const result = await handler({ sourceId: sourceWithEmailFieldMap.sourceId });
@@ -539,6 +588,8 @@ describe('collector handler', () => {
         email: 'valid@example.com',
       },
     ]);
+    expect(result.persistenceRejectedRecords).toEqual([]);
+    expect(result.upsertAttempts).toBe(1);
     expect(result.rejectedRecords).toEqual([
       {
         index: 1,
@@ -552,6 +603,85 @@ describe('collector handler', () => {
             code: 'INVALID_FORMAT',
             message: 'email must contain "@" and cannot contain spaces.',
           },
+        ],
+      },
+    ]);
+    expect(upsertClient.calls).toEqual([
+      {
+        sourceId: sourceWithEmailFieldMap.sourceId,
+        correlationId: `${sourceWithEmailFieldMap.sourceId}-unknown-${sourceWithEmailFieldMap.cursorField}`,
+        records: [{ id: 41, email: 'valid@example.com' }],
+      },
+    ]);
+  });
+
+  it('maps partial success from official upsert-batch API', async () => {
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          VALID_SOURCE.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        customer_id: 10,
+        email: 'first@example.com',
+        updated_at: new Date('2026-03-04T10:10:00.000Z'),
+      },
+      {
+        customer_id: 11,
+        email: 'second@example.com',
+        updated_at: new Date('2026-03-04T10:20:00.000Z'),
+      },
+    ]);
+    const upsertClient = new SpyUpsertCustomersBatchClient((records) => ({
+      persistedRecords: [records[0]],
+      rejectedRecords: [
+        {
+          record: records[1],
+          reason: 'remote_validation_error',
+        },
+      ],
+      attempts: 2,
+      durationMs: 50,
+    }));
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+      upsertCustomersBatchClient: upsertClient,
+    });
+
+    const result = await handler({ sourceId: VALID_SOURCE.sourceId, meta: { executionId: 'exec-123' } });
+
+    expect(result.recordsSent).toBe(1);
+    expect(result.records).toEqual([{ id: 10, email: 'first@example.com' }]);
+    expect(result.persistenceRejectedRecords).toEqual([
+      {
+        record: { id: 11, email: 'second@example.com' },
+        reason: 'remote_validation_error',
+      },
+    ]);
+    expect(result.upsertAttempts).toBe(2);
+    expect(upsertClient.calls).toEqual([
+      {
+        sourceId: VALID_SOURCE.sourceId,
+        correlationId: 'exec-123',
+        records: [
+          { id: 10, email: 'first@example.com' },
+          { id: 11, email: 'second@example.com' },
         ],
       },
     ]);

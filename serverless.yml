@@ -119,6 +119,16 @@ custom:
       hubspotDlqAlarmThreshold: 1
       dlqAlarmPeriodSeconds: 60
       dlqAlarmEvaluationPeriods: 1
+      operationalAlarmTopicName: ${self:service}-dev-operational-alarms
+      operationalAlarmPeriodSeconds: 60
+      operationalAlarmEvaluationPeriods: 1
+      lambdaErrorAlarmThreshold: 1
+      schedulerDurationAlarmThresholdMs: 25000
+      collectorDurationAlarmThresholdMs: 50000
+      consumerDurationAlarmThresholdMs: 25000
+      orchestrationFailureAlarmThreshold: 1
+      orchestrationTimeoutAlarmThreshold: 1
+      orchestrationDurationP95AlarmThresholdMs: 300000
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
       mapMaxConcurrency: 2
@@ -146,6 +156,16 @@ custom:
       hubspotDlqAlarmThreshold: 1
       dlqAlarmPeriodSeconds: 60
       dlqAlarmEvaluationPeriods: 1
+      operationalAlarmTopicName: ${self:service}-stg-operational-alarms
+      operationalAlarmPeriodSeconds: 60
+      operationalAlarmEvaluationPeriods: 1
+      lambdaErrorAlarmThreshold: 1
+      schedulerDurationAlarmThresholdMs: 25000
+      collectorDurationAlarmThresholdMs: 50000
+      consumerDurationAlarmThresholdMs: 25000
+      orchestrationFailureAlarmThreshold: 1
+      orchestrationTimeoutAlarmThreshold: 1
+      orchestrationDurationP95AlarmThresholdMs: 300000
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
       mapMaxConcurrency: 5
@@ -173,6 +193,16 @@ custom:
       hubspotDlqAlarmThreshold: 5
       dlqAlarmPeriodSeconds: 60
       dlqAlarmEvaluationPeriods: 1
+      operationalAlarmTopicName: ${self:service}-prod-operational-alarms
+      operationalAlarmPeriodSeconds: 60
+      operationalAlarmEvaluationPeriods: 1
+      lambdaErrorAlarmThreshold: 2
+      schedulerDurationAlarmThresholdMs: 25000
+      collectorDurationAlarmThresholdMs: 50000
+      consumerDurationAlarmThresholdMs: 25000
+      orchestrationFailureAlarmThreshold: 2
+      orchestrationTimeoutAlarmThreshold: 1
+      orchestrationDurationP95AlarmThresholdMs: 420000
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
       mapMaxConcurrency: 10
@@ -934,6 +964,241 @@ resources:
           - Ref: DlqAlarmTopic
         OKActions:
           - Ref: DlqAlarmTopic
+    OperationalAlarmTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.stages.${self:provider.stage}.operationalAlarmTopicName}
+        KmsMasterKeyId: alias/aws/sns
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+          - Key: Scope
+            Value: operational-alarms
+    SchedulerErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-scheduler-errors
+        AlarmDescription: Alarm when Scheduler Lambda errors exceed threshold.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.schedulerFunctionName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.lambdaErrorAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    SchedulerDurationP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-scheduler-duration-p95-high
+        AlarmDescription: Alarm when Scheduler Lambda p95 duration exceeds expected threshold.
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.schedulerFunctionName}
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.schedulerDurationAlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    CollectorErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-collector-errors
+        AlarmDescription: Alarm when Collector Lambda errors exceed threshold.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.prefix}-collector
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.lambdaErrorAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    CollectorDurationP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-collector-duration-p95-high
+        AlarmDescription: Alarm when Collector Lambda p95 duration exceeds expected threshold.
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.prefix}-collector
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.collectorDurationAlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    SalesforceConsumerErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-salesforce-consumer-errors
+        AlarmDescription: Alarm when Salesforce consumer Lambda errors exceed threshold.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.salesforceConsumerFunctionName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.lambdaErrorAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    SalesforceConsumerDurationP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-salesforce-consumer-duration-p95-high
+        AlarmDescription: Alarm when Salesforce consumer Lambda p95 duration exceeds expected threshold.
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.salesforceConsumerFunctionName}
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.consumerDurationAlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    HubspotConsumerErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-hubspot-consumer-errors
+        AlarmDescription: Alarm when HubSpot consumer Lambda errors exceed threshold.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.hubspotConsumerFunctionName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.lambdaErrorAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    HubspotConsumerDurationP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-hubspot-consumer-duration-p95-high
+        AlarmDescription: Alarm when HubSpot consumer Lambda p95 duration exceeds expected threshold.
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.hubspotConsumerFunctionName}
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.consumerDurationAlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    MainOrchestrationExecutionsFailedAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-orchestration-executions-failed
+        AlarmDescription: Alarm when main orchestration executions fail.
+        Namespace: AWS/States
+        MetricName: ExecutionsFailed
+        Dimensions:
+          - Name: StateMachineArn
+            Value:
+              Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.orchestrationFailureAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    MainOrchestrationExecutionsTimedOutAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-orchestration-executions-timed-out
+        AlarmDescription: Alarm when main orchestration executions time out.
+        Namespace: AWS/States
+        MetricName: ExecutionsTimedOut
+        Dimensions:
+          - Name: StateMachineArn
+            Value:
+              Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.orchestrationTimeoutAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    MainOrchestrationExecutionTimeP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-orchestration-execution-time-p95-high
+        AlarmDescription: Alarm when main orchestration p95 execution time exceeds expected threshold.
+        Namespace: AWS/States
+        MetricName: ExecutionTime
+        Dimensions:
+          - Name: StateMachineArn
+            Value:
+              Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.orchestrationDurationP95AlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
     MainOrchestrationObservabilityDashboard:
       Type: AWS::CloudWatch::Dashboard
       Properties:
@@ -1174,6 +1439,78 @@ resources:
           - Arn
       Export:
         Name: ${self:custom.naming.prefix}-hubspot-dlq-visible-messages-alarm-arn
+    OperationalAlarmTopicArn:
+      Description: ARN do topico SNS de notificacoes dos alarmes operacionais.
+      Value:
+        Ref: OperationalAlarmTopic
+      Export:
+        Name: ${self:custom.naming.prefix}-operational-alarm-topic-arn
+    SchedulerErrorsAlarmName:
+      Description: Nome do alarme de erros da Lambda Scheduler.
+      Value:
+        Ref: SchedulerErrorsAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-scheduler-errors-alarm-name
+    SchedulerDurationP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da Lambda Scheduler.
+      Value:
+        Ref: SchedulerDurationP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-scheduler-duration-p95-high-alarm-name
+    CollectorErrorsAlarmName:
+      Description: Nome do alarme de erros da Lambda coletora.
+      Value:
+        Ref: CollectorErrorsAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-collector-errors-alarm-name
+    CollectorDurationP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da Lambda coletora.
+      Value:
+        Ref: CollectorDurationP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-collector-duration-p95-high-alarm-name
+    SalesforceConsumerErrorsAlarmName:
+      Description: Nome do alarme de erros da consumidora Salesforce.
+      Value:
+        Ref: SalesforceConsumerErrorsAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-consumer-errors-alarm-name
+    SalesforceConsumerDurationP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da consumidora Salesforce.
+      Value:
+        Ref: SalesforceConsumerDurationP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-consumer-duration-p95-high-alarm-name
+    HubspotConsumerErrorsAlarmName:
+      Description: Nome do alarme de erros da consumidora HubSpot.
+      Value:
+        Ref: HubspotConsumerErrorsAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-consumer-errors-alarm-name
+    HubspotConsumerDurationP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da consumidora HubSpot.
+      Value:
+        Ref: HubspotConsumerDurationP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-consumer-duration-p95-high-alarm-name
+    MainOrchestrationExecutionsFailedAlarmName:
+      Description: Nome do alarme de falha de execucao da state machine principal.
+      Value:
+        Ref: MainOrchestrationExecutionsFailedAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-orchestration-executions-failed-alarm-name
+    MainOrchestrationExecutionsTimedOutAlarmName:
+      Description: Nome do alarme de timeout de execucao da state machine principal.
+      Value:
+        Ref: MainOrchestrationExecutionsTimedOutAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-orchestration-executions-timed-out-alarm-name
+    MainOrchestrationExecutionTimeP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da state machine principal.
+      Value:
+        Ref: MainOrchestrationExecutionTimeP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-orchestration-execution-time-p95-high-alarm-name
     MainOrchestrationStateMachineLogGroupName:
       Description: Nome do log group da state machine principal.
       Value: ${self:custom.naming.orchestrationLogGroupName}

@@ -272,7 +272,7 @@ const createCollectorHandler = ({
   logger,
 }: {
   sourceRegistryRepository: SpySourceRegistryRepository;
-  cursorRepository?: SpyCollectorCursorRepository;
+  cursorRepository?: CollectorDependencies['cursorRepository'];
   secretRepository: SpySecretRepository;
   postgresQueryExecutorFactory: SpyPostgresQueryExecutorFactory;
   mySqlQueryExecutorFactory?: SpyMySqlQueryExecutorFactory;
@@ -608,6 +608,53 @@ describe('collector handler', () => {
       },
     ]);
     expect(cursorRepository.saveCalls).toEqual([]);
+  });
+
+  it('fails execution when cursor persistence fails with non-conflict error', async () => {
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          VALID_SOURCE.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        customer_id: 10,
+        email: 'first@example.com',
+        updated_at: new Date('2026-03-04T10:10:00.000Z'),
+      },
+    ]);
+    const failingCursorRepository: CollectorDependencies['cursorRepository'] = {
+      getBySource: () =>
+        Promise.resolve({
+          source: VALID_SOURCE.sourceId,
+          last: '2026-03-04T09:59:00.000Z',
+          updatedAt: '2026-03-04T10:00:00.000Z',
+        }),
+      save: () => Promise.reject(new Error('cursor persistence failed')),
+    };
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      cursorRepository: failingCursorRepository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+    });
+
+    await expect(handler({ sourceId: VALID_SOURCE.sourceId })).rejects.toThrow(
+      'cursor persistence failed',
+    );
   });
 
   it('filters invalid canonical records and keeps explicit rejection reasons', async () => {

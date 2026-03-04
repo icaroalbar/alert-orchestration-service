@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  IntegrationExternalApiAuthError,
   IntegrationExternalApiPermanentError,
   IntegrationExternalApiTransientError,
   createIntegrationExternalApiClient,
@@ -35,6 +36,11 @@ describe('createIntegrationExternalApiClient', () => {
         metricCalls.push(metric);
         return Promise.resolve();
       },
+      resolveAuthHeaders: () =>
+        Promise.resolve({
+          Authorization: 'Bearer token-123',
+          'x-api-key': 'key-123',
+        }),
       httpClient: (request) => {
         requests.push(request);
         return Promise.resolve({
@@ -61,7 +67,11 @@ describe('createIntegrationExternalApiClient', () => {
       {
         url: 'https://salesforce.internal/customers/events',
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          Authorization: 'Bearer token-123',
+          'x-api-key': 'key-123',
+        },
         body: JSON.stringify({
           eventType: 'customer.persisted',
           integrationId: 'salesforce',
@@ -145,5 +155,32 @@ describe('createIntegrationExternalApiClient', () => {
         },
       }),
     ).rejects.toBeInstanceOf(IntegrationExternalApiTransientError);
+  });
+
+  it('throws auth error when outbound auth resolution fails', async () => {
+    const client = createIntegrationExternalApiClient({
+      integrationName: 'hubspot',
+      targetBaseUrl: 'https://hubspot.internal',
+      timeoutMs: 3000,
+      resolveAuthHeaders: () => Promise.reject(new Error('secret missing')),
+      httpClient: () =>
+        Promise.resolve({
+          status: 200,
+          text: () => Promise.resolve('ok'),
+        }),
+    });
+
+    await expect(
+      client({
+        messageId: 'msg-1',
+        payload: {
+          eventType: 'customer.persisted',
+          sourceId: 'source-1',
+          correlationId: 'exec-1',
+          publishedAt: '2026-03-04T10:00:00.000Z',
+          customer: { id: 1 },
+        },
+      }),
+    ).rejects.toBeInstanceOf(IntegrationExternalApiAuthError);
   });
 });

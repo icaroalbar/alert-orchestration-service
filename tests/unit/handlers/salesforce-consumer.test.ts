@@ -35,10 +35,17 @@ describe('salesforce-consumer handler', () => {
     jest.doMock('../../../src/infra/idempotency/dynamodb-collector-idempotency-repository', () => ({
       createDynamoDbCollectorIdempotencyRepository: () => idempotencyRepository,
     }));
+    jest.doMock('../../../src/infra/security/secrets-manager-outbound-auth-headers-resolver', () => ({
+      createSecretsManagerOutboundAuthHeadersResolver: () => () =>
+        Promise.resolve({
+          Authorization: 'Bearer token-123',
+        }),
+    }));
     process.env = {
       ...originalEnv,
       SALESFORCE_INTEGRATION_TARGET_BASE_URL: 'https://salesforce.internal',
       IDEMPOTENCY_TABLE_NAME: 'idempotency-table',
+      SALESFORCE_INTEGRATION_AUTH_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123:secret:salesforce',
     };
     global.fetch = jest.fn(() =>
       Promise.resolve({
@@ -68,10 +75,17 @@ describe('salesforce-consumer handler', () => {
     jest.doMock('../../../src/infra/idempotency/dynamodb-collector-idempotency-repository', () => ({
       createDynamoDbCollectorIdempotencyRepository: () => idempotencyRepository,
     }));
+    jest.doMock('../../../src/infra/security/secrets-manager-outbound-auth-headers-resolver', () => ({
+      createSecretsManagerOutboundAuthHeadersResolver: () => () =>
+        Promise.resolve({
+          Authorization: 'Bearer token-123',
+        }),
+    }));
     process.env = {
       ...originalEnv,
       SALESFORCE_INTEGRATION_TARGET_BASE_URL: 'https://salesforce.internal',
       IDEMPOTENCY_TABLE_NAME: 'idempotency-table',
+      SALESFORCE_INTEGRATION_AUTH_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123:secret:salesforce',
     };
     global.fetch = jest.fn(() =>
       Promise.resolve({

@@ -154,6 +154,7 @@ export const createUpsertCustomersBatchClient = ({
   timeoutMs,
   retryPolicy,
   httpClient,
+  resolveAuthHeaders = () => Promise.resolve({}),
   nowMs = Date.now,
   sleep = (delayMs: number) =>
     new Promise<void>((resolve) => {
@@ -164,6 +165,7 @@ export const createUpsertCustomersBatchClient = ({
   timeoutMs: number;
   retryPolicy: UpsertCustomersBatchRetryPolicy;
   httpClient: UpsertCustomersBatchHttpClient;
+  resolveAuthHeaders?: () => Promise<Record<string, string>>;
   nowMs?: () => number;
   sleep?: (delayMs: number) => Promise<void>;
 }): UpsertCustomersBatchClient => {
@@ -186,6 +188,13 @@ export const createUpsertCustomersBatchClient = ({
     }
 
     const startedAt = nowMs();
+    let authHeaders: Record<string, string>;
+    try {
+      authHeaders = await resolveAuthHeaders();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'UnknownError';
+      throw new Error(`Official API outbound auth resolution failed: ${reason}`);
+    }
     let attempts = 0;
 
     while (attempts < retryPolicy.maxAttempts) {
@@ -201,6 +210,7 @@ export const createUpsertCustomersBatchClient = ({
           }),
           headers: {
             'content-type': 'application/json',
+            ...authHeaders,
           },
         });
 

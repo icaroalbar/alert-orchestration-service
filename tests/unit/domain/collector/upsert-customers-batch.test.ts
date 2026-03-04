@@ -6,9 +6,13 @@ import {
 } from '../../../../src/domain/collector/upsert-customers-batch';
 
 describe('createUpsertCustomersBatchClient', () => {
-  it('maps partial success response into persisted and rejected records', async () => {
-    const httpClient = () =>
-      Promise.resolve({
+  it('maps partial success response into persisted and rejected records with auth headers', async () => {
+    const requests: Array<{ headers: Record<string, string> }> = [];
+    const httpClient = (request: {
+      headers: Record<string, string>;
+    }) => {
+      requests.push(request);
+      return Promise.resolve({
       status: 200,
       json: () =>
         Promise.resolve({
@@ -18,7 +22,8 @@ describe('createUpsertCustomersBatchClient', () => {
         ],
       }),
       text: () => Promise.resolve(''),
-    });
+      });
+    };
 
     const client = createUpsertCustomersBatchClient({
       endpointUrl: 'https://official-api.internal/upsert-batch',
@@ -29,6 +34,11 @@ describe('createUpsertCustomersBatchClient', () => {
         backoffRate: 2,
       },
       httpClient,
+      resolveAuthHeaders: () =>
+        Promise.resolve({
+          Authorization: 'Bearer token-123',
+          'x-api-key': 'key-123',
+        }),
     });
 
     const result = await client({
@@ -48,6 +58,14 @@ describe('createUpsertCustomersBatchClient', () => {
       },
     ]);
     expect(result.attempts).toBe(1);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      headers: {
+        'content-type': 'application/json',
+        Authorization: 'Bearer token-123',
+        'x-api-key': 'key-123',
+      },
+    });
   });
 
   it('retries transient status codes and succeeds in a later attempt', async () => {
@@ -130,5 +148,32 @@ describe('createUpsertCustomersBatchClient', () => {
         records: [{ id: 1 }],
       }),
     ).rejects.toBeInstanceOf(UpsertCustomersBatchApiError);
+  });
+
+  it('fails with controlled error when auth headers cannot be resolved', async () => {
+    const client = createUpsertCustomersBatchClient({
+      endpointUrl: 'https://official-api.internal/upsert-batch',
+      timeoutMs: 3000,
+      retryPolicy: {
+        maxAttempts: 3,
+        baseDelayMs: 10,
+        backoffRate: 2,
+      },
+      resolveAuthHeaders: () => Promise.reject(new Error('missing outbound secret')),
+      httpClient: () =>
+        Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve({ results: [] }),
+          text: () => Promise.resolve(''),
+        }),
+    });
+
+    await expect(
+      client({
+        sourceId: 'source-1',
+        correlationId: 'exec-1',
+        records: [{ id: 1 }],
+      }),
+    ).rejects.toThrow('Official API outbound auth resolution failed: missing outbound secret');
   });
 });

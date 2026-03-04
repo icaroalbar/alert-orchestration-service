@@ -48,6 +48,7 @@ import {
   type RuntimeMetricsPublisher,
 } from '../infra/observability/cloudwatch-metrics-publisher';
 import { createSecretsManagerSecretRepository } from '../infra/secrets/secrets-manager-secret-repository';
+import { createSecretsManagerOutboundAuthHeadersResolver } from '../infra/security/secrets-manager-outbound-auth-headers-resolver';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
 import { createSnsCustomerEventsPublisher, type CustomerEventsPublisher } from '../infra/events/sns-customer-events-publisher';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
@@ -107,6 +108,7 @@ const METRICS_NAMESPACE_ENV = 'METRICS_NAMESPACE';
 const METRICS_NAMESPACE_DEFAULT = 'AlertOrchestrationService/Runtime';
 const STAGE_ENV = 'STAGE';
 const SERVICE_NAME_ENV = 'SERVICE_NAME';
+const OFFICIAL_CUSTOMERS_AUTH_SECRET_ARN_ENV = 'OFFICIAL_CUSTOMERS_AUTH_SECRET_ARN';
 
 type PostgresQueryExecutorFactory = (credentials: CollectorSourceCredentials) => PostgresQueryExecutor;
 type MySqlQueryExecutorFactory = (credentials: CollectorSourceCredentials) => MySqlQueryExecutor;
@@ -610,6 +612,10 @@ const getDefaultDependencies = (): CollectorDependencies => {
   if (!officialCustomersUpsertUrl || officialCustomersUpsertUrl.trim().length === 0) {
     throw new Error('OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL is required.');
   }
+  const officialCustomersAuthSecretArn = process.env[OFFICIAL_CUSTOMERS_AUTH_SECRET_ARN_ENV];
+  if (!officialCustomersAuthSecretArn || officialCustomersAuthSecretArn.trim().length === 0) {
+    throw new Error(`${OFFICIAL_CUSTOMERS_AUTH_SECRET_ARN_ENV} is required.`);
+  }
 
   const customerEventsTopicArn = process.env.CLIENT_EVENTS_TOPIC_ARN;
   if (!customerEventsTopicArn || customerEventsTopicArn.trim().length === 0) {
@@ -621,10 +627,12 @@ const getDefaultDependencies = (): CollectorDependencies => {
     throw new Error('IDEMPOTENCY_TABLE_NAME is required.');
   }
 
+  const secretRepository = createSecretsManagerSecretRepository();
+
   cachedDefaultDependencies = {
     sourceRegistryRepository: createDynamoDbSourceRegistryRepository({ tableName }),
     cursorRepository: createDynamoDbCollectorCursorRepository({ tableName: cursorsTableName }),
-    secretRepository: createSecretsManagerSecretRepository(),
+    secretRepository,
     postgresQueryExecutorFactory: createPostgresQueryExecutorFactory({
       poolSettings: {
         maxConnections: resolvePostgresPoolMaxConnections(
@@ -672,6 +680,10 @@ const getDefaultDependencies = (): CollectorDependencies => {
         ),
       },
       httpClient: createFetchUpsertCustomersBatchHttpClient(),
+      resolveAuthHeaders: createSecretsManagerOutboundAuthHeadersResolver({
+        secretArn: officialCustomersAuthSecretArn,
+        secretRepository,
+      }),
       nowMs: Date.now,
       sleep,
     }),

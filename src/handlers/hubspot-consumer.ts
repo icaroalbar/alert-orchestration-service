@@ -4,6 +4,7 @@ import {
   type IntegrationConsumerSqsResult,
 } from './shared/create-integration-consumer-handler';
 import {
+  IntegrationExternalApiAuthError,
   IntegrationExternalApiPermanentError,
   IntegrationExternalApiTransientError,
   createIntegrationExternalApiClient,
@@ -12,12 +13,15 @@ import { createDynamoDbCollectorIdempotencyRepository } from '../infra/idempoten
 import { createFetchIntegrationHttpClient } from '../infra/integrations/fetch-integration-http-client';
 import { createCloudWatchMetricsPublisher } from '../infra/observability/cloudwatch-metrics-publisher';
 import { createIntegrationDeliveryMetricsPublisher } from '../infra/observability/integration-delivery-metrics-publisher';
+import { createSecretsManagerSecretRepository } from '../infra/secrets/secrets-manager-secret-repository';
+import { createSecretsManagerOutboundAuthHeadersResolver } from '../infra/security/secrets-manager-outbound-auth-headers-resolver';
 
 const HUBSPOT_INTEGRATION_NAME = 'hubspot';
 const HUBSPOT_TARGET_BASE_URL_ENV = 'HUBSPOT_INTEGRATION_TARGET_BASE_URL';
 const INTEGRATION_API_TIMEOUT_MS_ENV = 'INTEGRATION_API_TIMEOUT_MS';
 const IDEMPOTENCY_TABLE_NAME_ENV = 'IDEMPOTENCY_TABLE_NAME';
 const CONSUMER_IDEMPOTENCY_TTL_SECONDS_ENV = 'CONSUMER_IDEMPOTENCY_TTL_SECONDS';
+const HUBSPOT_AUTH_SECRET_ARN_ENV = 'HUBSPOT_INTEGRATION_AUTH_SECRET_ARN';
 const METRICS_NAMESPACE_ENV = 'METRICS_NAMESPACE';
 const METRICS_NAMESPACE_DEFAULT = 'AlertOrchestrationService/Runtime';
 const STAGE_ENV = 'STAGE';
@@ -78,11 +82,22 @@ const getHandler = (): ((event: IntegrationConsumerSqsEvent) => Promise<Integrat
     }
   }
 
+  const authSecretArn = process.env[HUBSPOT_AUTH_SECRET_ARN_ENV];
+  if (!authSecretArn || authSecretArn.trim().length === 0) {
+    throw new Error(`${HUBSPOT_AUTH_SECRET_ARN_ENV} is required.`);
+  }
+
+  const secretRepository = createSecretsManagerSecretRepository();
+
   const sendCustomerEvent = createIntegrationExternalApiClient({
     integrationName: HUBSPOT_INTEGRATION_NAME,
     targetBaseUrl,
     timeoutMs,
     httpClient: createFetchIntegrationHttpClient(),
+    resolveAuthHeaders: createSecretsManagerOutboundAuthHeadersResolver({
+      secretArn: authSecretArn,
+      secretRepository,
+    }),
     metricsPublisher: createIntegrationDeliveryMetricsPublisher({
       runtimeMetricsPublisher: createCloudWatchMetricsPublisher({
         namespace: process.env[METRICS_NAMESPACE_ENV] ?? METRICS_NAMESPACE_DEFAULT,
@@ -101,6 +116,9 @@ const getHandler = (): ((event: IntegrationConsumerSqsEvent) => Promise<Integrat
     idempotencyTtlSeconds,
     processRecord: ({ messageId, payload }) => sendCustomerEvent({ messageId, payload }),
     classifyError: (error) => {
+      if (error instanceof IntegrationExternalApiAuthError) {
+        return 'permanent';
+      }
       if (error instanceof IntegrationExternalApiPermanentError) {
         return 'permanent';
       }

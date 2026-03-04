@@ -3,7 +3,11 @@ import {
   type IntegrationConsumerSqsEvent,
   type IntegrationConsumerSqsResult,
 } from './shared/create-integration-consumer-handler';
-import { createIntegrationExternalApiClient } from '../infra/integrations/external-api-client';
+import {
+  IntegrationExternalApiPermanentError,
+  IntegrationExternalApiTransientError,
+  createIntegrationExternalApiClient,
+} from '../infra/integrations/external-api-client';
 import { createFetchIntegrationHttpClient } from '../infra/integrations/fetch-integration-http-client';
 
 const SALESFORCE_INTEGRATION_NAME = 'salesforce';
@@ -53,6 +57,16 @@ const getHandler = (): ((event: IntegrationConsumerSqsEvent) => Promise<Integrat
     integrationName: SALESFORCE_INTEGRATION_NAME,
     targetBaseUrl,
     processRecord: ({ messageId, payload }) => sendCustomerEvent({ messageId, payload }),
+    classifyError: (error) => {
+      if (error instanceof IntegrationExternalApiPermanentError) {
+        return 'permanent';
+      }
+      if (error instanceof IntegrationExternalApiTransientError) {
+        return 'transient';
+      }
+
+      return 'transient';
+    },
   });
 
   return cachedHandler;

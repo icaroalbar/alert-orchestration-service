@@ -120,4 +120,46 @@ describe('createIntegrationConsumerHandler', () => {
       logger.infoCalls.filter(([eventName]) => eventName === 'integration.consumer.invalid_record'),
     ).toHaveLength(2);
   });
+
+  it('retries only transient failures and discards permanent failures', async () => {
+    class PermanentError extends Error {}
+    class TransientError extends Error {}
+
+    const handler = createIntegrationConsumerHandler({
+      integrationName: 'salesforce',
+      targetBaseUrl: 'https://salesforce.internal',
+      processRecord: ({ messageId }) => {
+        if (messageId === 'msg-permanent') {
+          return Promise.reject(new PermanentError('permanent_error'));
+        }
+
+        return Promise.reject(new TransientError('transient_error'));
+      },
+      classifyError: (error) => (error instanceof PermanentError ? 'permanent' : 'transient'),
+      logger: new SpyLogger(),
+    });
+
+    const result = await handler({
+      Records: [
+        {
+          messageId: 'msg-permanent',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+          attributes: {
+            ApproximateReceiveCount: '3',
+          },
+        },
+        {
+          messageId: 'msg-transient',
+          body: '{"eventType":"customer.persisted","sourceId":"source-2","correlationId":"exec-2","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":2}}',
+          attributes: {
+            ApproximateReceiveCount: '1',
+          },
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      batchItemFailures: [{ itemIdentifier: 'msg-transient' }],
+    });
+  });
 });

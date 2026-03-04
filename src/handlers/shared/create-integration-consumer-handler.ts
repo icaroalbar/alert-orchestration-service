@@ -1,6 +1,9 @@
 export interface IntegrationConsumerSqsRecord {
   messageId: string;
   body: string;
+  attributes?: {
+    ApproximateReceiveCount?: string;
+  };
 }
 
 export interface IntegrationConsumerSqsEvent {
@@ -22,6 +25,7 @@ export interface CreateIntegrationConsumerHandlerParams {
     integrationName: string;
     targetBaseUrl: string;
   }) => Promise<void>;
+  classifyError?: (error: unknown) => 'transient' | 'permanent';
   logger?: Pick<typeof console, 'info'>;
 }
 
@@ -86,6 +90,7 @@ export const createIntegrationConsumerHandler = ({
   integrationName,
   targetBaseUrl,
   processRecord = () => Promise.resolve(),
+  classifyError = () => 'transient',
   logger = console,
 }: CreateIntegrationConsumerHandlerParams) => {
   const normalizedIntegrationName = integrationName.trim();
@@ -120,12 +125,20 @@ export const createIntegrationConsumerHandler = ({
           targetBaseUrl: normalizedTargetBaseUrl,
         });
       } catch (error) {
-        batchItemFailures.push({
-          itemIdentifier: record.messageId,
-        });
+        const classification = classifyError(error);
+        const shouldRetry = classification === 'transient';
+        if (shouldRetry) {
+          batchItemFailures.push({
+            itemIdentifier: record.messageId,
+          });
+        }
+
         logger.info('integration.consumer.invalid_record', {
           integrationName: normalizedIntegrationName,
           messageId: record.messageId,
+          receiveCount: record.attributes?.ApproximateReceiveCount ?? null,
+          classification,
+          action: shouldRetry ? 'retry' : 'discard',
           reason: error instanceof Error ? error.message : 'unknown_error',
         });
       }

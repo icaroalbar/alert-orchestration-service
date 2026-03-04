@@ -47,4 +47,35 @@ describe('salesforce-consumer handler', () => {
       batchItemFailures: [],
     });
   });
+
+  it('discards permanent 4xx external errors without retrying the SQS message', async () => {
+    jest.resetModules();
+    process.env = {
+      ...originalEnv,
+      SALESFORCE_INTEGRATION_TARGET_BASE_URL: 'https://salesforce.internal',
+    };
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        status: 422,
+        text: () => Promise.resolve('invalid payload'),
+      }),
+    ) as never;
+
+    const module = await import('../../../src/handlers/salesforce-consumer');
+    await expect(
+      module.handler({
+        Records: [
+          {
+            messageId: 'msg-1',
+            body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+            attributes: {
+              ApproximateReceiveCount: '2',
+            },
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      batchItemFailures: [],
+    });
+  });
 });

@@ -35,6 +35,7 @@ A base do serviço é **TypeScript obrigatório**.
 - `npm run sls:package:stg`
 - `npm run sls:package:prod`
 - `npm run sls:package:all`
+- `npm run dlq:reprocess -- --integration <salesforce|hubspot|all> [--since ISO] [--until ISO] [--max-messages N] [--dry-run]`
 - `npm run validate:stage-render`
 - `npm run validate:stage-package`
 
@@ -210,6 +211,14 @@ Empacotamento estrito (requer credenciais AWS válidas no ambiente):
 ```bash
 npm run sls:package:all
 ```
+
+Reprocessamento manual de mensagens da DLQ para fila principal:
+
+```bash
+npm run dlq:reprocess -- --integration all --dry-run --since 2026-03-04T00:00:00Z
+```
+
+Guia operacional completo: `docs/integrations/dlq-reprocessing.md`.
 
 ## Ambiente de testes (isolado)
 

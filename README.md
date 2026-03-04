@@ -231,7 +231,7 @@ Renderização do template por stage:
 npm run validate:stage-render
 ```
 
-Esse comando tenta executar `sls:print:all`; quando a API do Serverless está indisponível por rede, ele aplica fallback estático no `serverless.yml` e registra aviso.
+Esse comando tenta executar `sls:print:all`; quando a API do Serverless está indisponível por rede **ou** quando o ambiente não possui autenticação/licença do Serverless Framework v4 (`serverless login`), ele aplica fallback estático no `serverless.yml` e registra aviso.
 
 Empacotamento para os 3 ambientes:
 

@@ -25,7 +25,7 @@ const emitUnclassifiedFailure = ({ stage, command }) => {
   );
 };
 
-const staticFallback = () => {
+const staticFallback = (reason) => {
   const serverless = readFileSync(new URL('../serverless.yml', import.meta.url), 'utf8');
   const stateMachineFile = new URL(
     '../state-machines/main-orchestration-v1.asl.json',
@@ -381,22 +381,15 @@ const staticFallback = () => {
     process.exit(1);
   }
 
-  const normalizeSchedulerOutput = states.NormalizeSchedulerOutput ?? {};
-  const schedulerParams = normalizeSchedulerOutput.Parameters?.scheduler ?? {};
-  if (schedulerParams['maxConcurrency.$'] !== '$.schedulerResult.maxConcurrency') {
-    console.error('Falha no fallback estático: NormalizeSchedulerOutput sem maxConcurrency.');
-    process.exit(1);
-  }
-
   const processEligibleSources = states.ProcessEligibleSources ?? {};
-  if (processEligibleSources.MaxConcurrencyPath !== '$.scheduler.maxConcurrency') {
+  if (processEligibleSources.MaxConcurrencyPath !== '$.schedulerResult.maxConcurrency') {
     console.error('Falha no fallback estático: Map sem MaxConcurrencyPath esperado.');
     process.exit(1);
   }
 
   const buildExecutionOutput = states.BuildExecutionOutput ?? {};
   const summaryParams = buildExecutionOutput.Parameters?.summary ?? {};
-  if (summaryParams['maxConcurrency.$'] !== '$.scheduler.maxConcurrency') {
+  if (summaryParams['maxConcurrency.$'] !== '$.schedulerResult.maxConcurrency') {
     console.error('Falha no fallback estático: summary sem maxConcurrency.');
     process.exit(1);
   }
@@ -512,11 +505,12 @@ const staticFallback = () => {
   }
 
   console.warn(
-    '\nAviso: renderização multi-stage indisponível por rede. Fallback estático no serverless.yml concluído.',
+    `\nAviso: renderização multi-stage indisponível no ambiente atual (${reason}). Fallback estático no serverless.yml concluído.`,
   );
 };
 
-const stageRenderCommand = process.env.VALIDATE_STAGE_RENDER_COMMAND ?? DEFAULT_STAGE_RENDER_COMMAND;
+const stageRenderCommand =
+  process.env.VALIDATE_STAGE_RENDER_COMMAND ?? DEFAULT_STAGE_RENDER_COMMAND;
 
 try {
   const output = run(stageRenderCommand);
@@ -528,8 +522,12 @@ try {
     output.includes('Unable to reach the Serverless API') ||
     output.includes('core.serverless.com') ||
     output.includes('EAI_AGAIN');
+  const authIssue =
+    output.includes('You must sign in or use a license key with Serverless Framework V.4') ||
+    output.includes('Please use "serverless login".');
+  const canFallback = networkIssue || authIssue;
 
-  if (!networkIssue) {
+  if (!canFallback) {
     emitUnclassifiedFailure({
       stage: 'stage-render',
       command: stageRenderCommand,
@@ -537,5 +535,6 @@ try {
     process.exit(1);
   }
 
-  staticFallback();
+  const fallbackReason = authIssue ? 'autenticação/licença do Serverless v4' : 'rede';
+  staticFallback(fallbackReason);
 }

@@ -97,4 +97,68 @@ describe('mapRecordsWithFieldMap', () => {
       });
     }
   });
+
+  it('maps composed canonical payload with multiple mapped fields in a single pass', () => {
+    const result = mapRecordsWithFieldMap({
+      sourceId: 'source-acme',
+      records: [
+        {
+          customer_id: 456,
+          first_name: 'Ada',
+          last_name: 'Lovelace',
+          loyalty_level: 'gold',
+          external_meta: 'ignored',
+        },
+      ],
+      fieldMap: {
+        id: 'customer_id',
+        firstName: 'first_name',
+        lastName: 'last_name',
+        loyaltyTier: 'loyalty_level',
+      },
+      requiredCanonicalFields: ['id'],
+    });
+
+    expect(result.records).toEqual([
+      {
+        id: 456,
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        loyaltyTier: 'gold',
+      },
+    ]);
+    expect(result.ignoredSourceColumns).toEqual(['external_meta']);
+  });
+
+  it('keeps canonical scalar types stable when mapping numbers, booleans and nullables', () => {
+    const result = mapRecordsWithFieldMap({
+      sourceId: 'source-acme',
+      records: [
+        {
+          customer_id: 789,
+          is_active: true,
+          vip_score: 98.5,
+          notes: null,
+        },
+      ],
+      fieldMap: {
+        id: 'customer_id',
+        active: 'is_active',
+        score: 'vip_score',
+        notes: 'notes',
+        email: 'email_address',
+      },
+      requiredCanonicalFields: ['id'],
+    });
+
+    expect(result.records).toEqual([
+      {
+        id: 789,
+        active: true,
+        score: 98.5,
+        notes: null,
+        email: null,
+      },
+    ]);
+  });
 });

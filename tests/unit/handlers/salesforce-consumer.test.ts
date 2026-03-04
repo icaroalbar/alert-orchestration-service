@@ -27,7 +27,7 @@ describe('salesforce-consumer handler', () => {
         Records: [
           {
             messageId: 'msg-1',
-            body: '{"customerId":"1"}',
+            body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
           },
         ],
       }),

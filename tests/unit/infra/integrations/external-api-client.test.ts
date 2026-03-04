@@ -59,6 +59,7 @@ describe('createIntegrationExternalApiClient', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           eventType: 'customer.persisted',
+          integrationId: 'salesforce',
           sourceId: 'source-1',
           correlationId: 'exec-1',
           occurredAt: '2026-03-04T10:00:00.000Z',

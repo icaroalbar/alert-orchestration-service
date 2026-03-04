@@ -79,6 +79,7 @@ export const createIntegrationExternalApiClient = ({
       },
       body: JSON.stringify({
         eventType: payload.eventType,
+        integrationId: normalizedIntegrationName,
         sourceId: payload.sourceId,
         correlationId: payload.correlationId,
         occurredAt: payload.publishedAt,

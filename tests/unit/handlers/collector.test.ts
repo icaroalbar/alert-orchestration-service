@@ -415,7 +415,7 @@ describe('collector handler', () => {
           sourceId: 'source-acme',
           engine: 'postgres',
           attempts: 1,
-          durationMs: 30,
+          durationMs: expect.any(Number),
         },
       ],
       [

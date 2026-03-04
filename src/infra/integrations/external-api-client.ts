@@ -1,5 +1,6 @@
 import type { IntegrationConsumerPayload } from '../../handlers/shared/create-integration-consumer-handler';
 import { createStructuredLogger } from '../../shared/logging/structured-logger';
+import type { PublishIntegrationDeliveryMetrics } from '../observability/integration-delivery-metrics-publisher';
 
 export class IntegrationExternalApiPermanentError extends Error {
   constructor(
@@ -40,6 +41,8 @@ export type IntegrationCustomerEventSender = (
   params: SendIntegrationCustomerEventParams,
 ) => Promise<void>;
 
+const noopMetricsPublisher: PublishIntegrationDeliveryMetrics = async () => {};
+
 const is4xx = (statusCode: number): boolean => statusCode >= 400 && statusCode < 500;
 const is5xx = (statusCode: number): boolean => statusCode >= 500 && statusCode < 600;
 
@@ -48,6 +51,7 @@ export const createIntegrationExternalApiClient = ({
   targetBaseUrl,
   timeoutMs,
   httpClient,
+  metricsPublisher = noopMetricsPublisher,
   nowMs = Date.now,
   logger = console,
 }: {
@@ -55,6 +59,7 @@ export const createIntegrationExternalApiClient = ({
   targetBaseUrl: string;
   timeoutMs: number;
   httpClient: IntegrationHttpClient;
+  metricsPublisher?: PublishIntegrationDeliveryMetrics;
   nowMs?: () => number;
   logger?: Pick<typeof console, 'info'>;
 }): IntegrationCustomerEventSender => {
@@ -98,6 +103,12 @@ export const createIntegrationExternalApiClient = ({
       integrationName: normalizedIntegrationName,
       messageId,
       correlationId: payload.correlationId,
+      statusCode: response.status,
+      durationMs,
+    });
+    await metricsPublisher({
+      integrationId: normalizedIntegrationName,
+      sourceId: payload.sourceId,
       statusCode: response.status,
       durationMs,
     });

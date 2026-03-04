@@ -35,6 +35,20 @@ const isIsoDateTime = (value: string): boolean =>
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
   !Number.isNaN(Date.parse(value));
 
+const resolveReferenceNow = (rawNow?: string): { iso: string; timestamp: number } => {
+  const normalizedNow = rawNow?.trim();
+  const now = normalizedNow && normalizedNow.length > 0 ? normalizedNow : new Date().toISOString();
+
+  if (!isIsoDateTime(now)) {
+    throw new Error('Invalid scheduler reference time: now must use ISO-8601 UTC format.');
+  }
+
+  return {
+    iso: now,
+    timestamp: Date.parse(now),
+  };
+};
+
 const normalizeSchedulerSource = (source: SchedulerSource): SchedulerSource => {
   if (!isNonEmptyString(source.sourceId)) {
     throw new Error('Invalid scheduler source record: sourceId is required.');
@@ -61,6 +75,7 @@ export async function listEligibleSources({
     throw new Error('pageSize must be an integer greater than zero.');
   }
 
+  const referenceNow = resolveReferenceNow(now);
   const collected: SchedulerSource[] = [];
   const seen = new Set<string>();
   let nextToken: string | undefined;
@@ -69,11 +84,17 @@ export async function listEligibleSources({
     const page = await sourceRepository.listActiveSources({
       limit: pageSize,
       nextToken,
-      now,
+      now: referenceNow.iso,
     });
 
     for (const item of page.items) {
       const normalized = normalizeSchedulerSource(item);
+      const nextRunAtTimestamp = Date.parse(normalized.nextRunAt);
+
+      if (nextRunAtTimestamp > referenceNow.timestamp) {
+        continue;
+      }
+
       if (seen.has(normalized.sourceId)) {
         continue;
       }

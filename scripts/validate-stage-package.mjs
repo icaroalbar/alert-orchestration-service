@@ -36,11 +36,16 @@ try {
   process.exit(0);
 } catch (error) {
   const output = printCapturedOutput(error);
-  const canFallback =
+  const credentialsIssue =
     output.includes('AWS credentials missing or invalid') ||
-    output.includes('Could not load credentials from any providers') ||
+    output.includes('Could not load credentials from any providers');
+  const networkIssue =
     output.includes('Unable to reach the Serverless API') ||
     output.includes('core.serverless.com');
+  const authIssue =
+    output.includes('You must sign in or use a license key with Serverless Framework V.4') ||
+    output.includes('Please use "serverless login".');
+  const canFallback = credentialsIssue || networkIssue || authIssue;
 
   if (!canFallback) {
     emitUnclassifiedFailure({
@@ -50,8 +55,13 @@ try {
     process.exit(1);
   }
 
+  const fallbackReason = authIssue
+    ? 'autenticação/licença do Serverless v4'
+    : credentialsIssue
+      ? 'credenciais AWS'
+      : 'rede';
   console.warn(
-    '\nAviso: empacotamento multi-stage indisponível no ambiente atual (credenciais/rede). Executando fallback com build local.',
+    `\nAviso: empacotamento multi-stage indisponível no ambiente atual (${fallbackReason}). Executando fallback com build local.`,
   );
   execSync(stagePackageFallbackCommand, { stdio: 'inherit', env: process.env });
 }

@@ -13,6 +13,11 @@ import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamod
 import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
+import {
+  buildTelemetryAttributes,
+  toTelemetryLogContext,
+  withTelemetrySpan,
+} from '../shared/observability/open-telemetry';
 import { nowIso } from '../shared/time/now-iso';
 
 const JSON_HEADERS = {
@@ -109,144 +114,170 @@ export const createHandler =
       headers: event.headers,
       requestId: event.requestContext?.requestId,
     });
-    logger.info('api.sources.create.received', {
-      correlationId,
-    });
-
-    const parsedBody = parseBody(event.body);
-    if (!parsedBody.success) {
-      logger.info('api.sources.create.rejected', {
-        correlationId,
-        statusCode: parsedBody.response.statusCode,
-        reason: 'invalid_body',
-      });
-      return parsedBody.response;
-    }
-
-    const tenantId = resolveTenantIdFromJwtClaims(event);
-    if (!tenantId) {
-      logger.info('api.sources.create.rejected', {
-        correlationId,
-        statusCode: 401,
-        reason: 'tenant_context_missing',
-      });
-      return response(401, {
-        message: 'Missing tenant context in JWT claims.',
-        code: 'TENANT_CONTEXT_MISSING',
-      });
-    }
-
-    if (
-      isRecord(parsedBody.value) &&
-      typeof parsedBody.value.tenantId === 'string' &&
-      parsedBody.value.tenantId.trim().length > 0 &&
-      parsedBody.value.tenantId.trim() !== tenantId
-    ) {
-      logger.info('api.sources.create.rejected', {
-        correlationId,
-        statusCode: 403,
-        reason: 'tenant_mismatch',
-      });
-      return response(403, {
-        message: 'Payload tenantId does not match authenticated tenant.',
-        code: 'TENANT_CONTEXT_MISMATCH',
-      });
-    }
-
-    const payloadForValidation = isRecord(parsedBody.value)
-      ? {
-          ...parsedBody.value,
-          tenantId,
-        }
-      : parsedBody.value;
-    const validation = validateSourceCreatePayload(payloadForValidation);
-    if (!validation.success) {
-      logger.info('api.sources.create.rejected', {
-        correlationId,
-        statusCode: 400,
-        reason: 'validation_error',
-      });
-      return response(400, {
-        message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
-        errors: validation.errors,
-      });
-    }
-
-    const createdAt = now();
-    const nextRunAt =
-      validation.value.scheduleType === 'interval'
-        ? calculateNextRunAt(
-            {
-              scheduleType: 'interval',
-              intervalMinutes: validation.value.intervalMinutes,
-            },
-            createdAt,
-          )
-        : calculateNextRunAt(
-            {
-              scheduleType: 'cron',
-              cronExpr: validation.value.cronExpr,
-            },
-            createdAt,
-          );
-    if (!nextRunAt.success) {
-      logger.info('api.sources.create.rejected', {
-        correlationId,
-        statusCode: 400,
-        reason: 'invalid_schedule',
-      });
-      return response(400, {
-        message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
-        errors: nextRunAt.errors,
-      });
-    }
-
-    const record: SourceRegistryRecord = {
-      ...validation.value,
-      nextRunAt: nextRunAt.value,
-      schemaVersion: SOURCE_SCHEMA_VERSION,
-      createdAt,
-      updatedAt: createdAt,
-    };
-
-    try {
-      await sourceRegistryRepository.create(record);
-      logger.info('api.sources.create.succeeded', {
-        correlationId,
-        statusCode: 201,
-        sourceId: record.sourceId,
-      });
-      return response(201, {
-        sourceId: record.sourceId,
-        metadata: {
-          schemaVersion: record.schemaVersion,
-          createdAt: record.createdAt,
-          updatedAt: record.updatedAt,
-          requestId: event.requestContext?.requestId ?? null,
-        },
-      });
-    } catch (error) {
-      if (error instanceof SourceAlreadyExistsError) {
-        logger.info('api.sources.create.conflict', {
+    return withTelemetrySpan({
+      component: 'api.sources.create',
+      spanName: 'api.sources.create',
+      attributes: buildTelemetryAttributes({
+        executionId: correlationId ?? undefined,
+      }),
+      run: async ({ span, traceContext, runInChildSpan }) => {
+        logger.info('api.sources.create.received', {
           correlationId,
-          statusCode: 409,
-          sourceId: record.sourceId,
         });
-        return response(409, {
-          message: error.message,
-          code: 'SOURCE_ALREADY_EXISTS',
+        logger.info('api.sources.create.trace_context', {
+          correlationId,
+          ...toTelemetryLogContext(traceContext),
         });
-      }
 
-      logger.info('api.sources.create.failed', {
-        correlationId,
-        statusCode: 500,
-        sourceId: record.sourceId,
-      });
-      return response(500, {
-        message: 'Failed to create source.',
-      });
-    }
+        const parsedBody = parseBody(event.body);
+        if (!parsedBody.success) {
+          logger.info('api.sources.create.rejected', {
+            correlationId,
+            statusCode: parsedBody.response.statusCode,
+            reason: 'invalid_body',
+          });
+          return parsedBody.response;
+        }
+
+        const tenantId = resolveTenantIdFromJwtClaims(event);
+        if (!tenantId) {
+          logger.info('api.sources.create.rejected', {
+            correlationId,
+            statusCode: 401,
+            reason: 'tenant_context_missing',
+          });
+          return response(401, {
+            message: 'Missing tenant context in JWT claims.',
+            code: 'TENANT_CONTEXT_MISSING',
+          });
+        }
+
+        span.setAttribute('tenantId', tenantId);
+
+        if (
+          isRecord(parsedBody.value) &&
+          typeof parsedBody.value.tenantId === 'string' &&
+          parsedBody.value.tenantId.trim().length > 0 &&
+          parsedBody.value.tenantId.trim() !== tenantId
+        ) {
+          logger.info('api.sources.create.rejected', {
+            correlationId,
+            statusCode: 403,
+            reason: 'tenant_mismatch',
+          });
+          return response(403, {
+            message: 'Payload tenantId does not match authenticated tenant.',
+            code: 'TENANT_CONTEXT_MISMATCH',
+          });
+        }
+
+        const payloadForValidation = isRecord(parsedBody.value)
+          ? {
+              ...parsedBody.value,
+              tenantId,
+            }
+          : parsedBody.value;
+        const validation = validateSourceCreatePayload(payloadForValidation);
+        if (!validation.success) {
+          logger.info('api.sources.create.rejected', {
+            correlationId,
+            statusCode: 400,
+            reason: 'validation_error',
+          });
+          return response(400, {
+            message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+            errors: validation.errors,
+          });
+        }
+
+        const createdAt = now();
+        const nextRunAt =
+          validation.value.scheduleType === 'interval'
+            ? calculateNextRunAt(
+                {
+                  scheduleType: 'interval',
+                  intervalMinutes: validation.value.intervalMinutes,
+                },
+                createdAt,
+              )
+            : calculateNextRunAt(
+                {
+                  scheduleType: 'cron',
+                  cronExpr: validation.value.cronExpr,
+                },
+                createdAt,
+              );
+        if (!nextRunAt.success) {
+          logger.info('api.sources.create.rejected', {
+            correlationId,
+            statusCode: 400,
+            reason: 'invalid_schedule',
+          });
+          return response(400, {
+            message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+            errors: nextRunAt.errors,
+          });
+        }
+
+        const record: SourceRegistryRecord = {
+          ...validation.value,
+          nextRunAt: nextRunAt.value,
+          schemaVersion: SOURCE_SCHEMA_VERSION,
+          createdAt,
+          updatedAt: createdAt,
+        };
+        span.setAttribute('sourceId', record.sourceId);
+
+        try {
+          await runInChildSpan(
+            {
+              spanName: 'api.sources.create.repository.create',
+              attributes: buildTelemetryAttributes({
+                sourceId: record.sourceId,
+                tenantId,
+                executionId: correlationId ?? undefined,
+              }),
+            },
+            async () => sourceRegistryRepository.create(record),
+          );
+          logger.info('api.sources.create.succeeded', {
+            correlationId,
+            statusCode: 201,
+            sourceId: record.sourceId,
+          });
+          return response(201, {
+            sourceId: record.sourceId,
+            metadata: {
+              schemaVersion: record.schemaVersion,
+              createdAt: record.createdAt,
+              updatedAt: record.updatedAt,
+              requestId: event.requestContext?.requestId ?? null,
+            },
+          });
+        } catch (error) {
+          if (error instanceof SourceAlreadyExistsError) {
+            logger.info('api.sources.create.conflict', {
+              correlationId,
+              statusCode: 409,
+              sourceId: record.sourceId,
+            });
+            return response(409, {
+              message: error.message,
+              code: 'SOURCE_ALREADY_EXISTS',
+            });
+          }
+
+          logger.info('api.sources.create.failed', {
+            correlationId,
+            statusCode: 500,
+            sourceId: record.sourceId,
+          });
+          return response(500, {
+            message: 'Failed to create source.',
+          });
+        }
+      },
+    });
   };
 
 export async function handler(event: CreateSourceEvent): Promise<CreateSourceResponse> {

@@ -14,6 +14,11 @@ import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamod
 import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
+import {
+  buildTelemetryAttributes,
+  toTelemetryLogContext,
+  withTelemetrySpan,
+} from '../shared/observability/open-telemetry';
 import { nowIso } from '../shared/time/now-iso';
 
 const JSON_HEADERS = {
@@ -128,157 +133,193 @@ export const createHandler =
       headers: event.headers,
       requestId: event.requestContext?.requestId,
     });
-    logger.info('api.sources.update.received', {
-      correlationId,
-    });
-
-    const sourceId = parseSourceId(event.pathParameters?.id);
-    if (!sourceId.success) {
-      logger.info('api.sources.update.rejected', {
-        correlationId,
-        statusCode: sourceId.response.statusCode,
-        reason: 'missing_source_id',
-      });
-      return sourceId.response;
-    }
-
-    const parsedBody = parseBody(event.body);
-    if (!parsedBody.success) {
-      logger.info('api.sources.update.rejected', {
-        correlationId,
-        statusCode: parsedBody.response.statusCode,
-        sourceId: sourceId.value,
-        reason: 'invalid_body',
-      });
-      return parsedBody.response;
-    }
-
-    const tenantId = resolveTenantIdFromJwtClaims(event);
-    if (!tenantId) {
-      logger.info('api.sources.update.rejected', {
-        correlationId,
-        statusCode: 401,
-        sourceId: sourceId.value,
-        reason: 'tenant_context_missing',
-      });
-      return response(401, {
-        message: 'Missing tenant context in JWT claims.',
-        code: 'TENANT_CONTEXT_MISSING',
-      });
-    }
-
-    const patchValidation = validateSourcePatchPayload(parsedBody.value);
-    if (!patchValidation.success) {
-      logger.info('api.sources.update.rejected', {
-        correlationId,
-        statusCode: 400,
-        sourceId: sourceId.value,
-        reason: 'validation_error',
-      });
-      return response(400, {
-        message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
-        errors: patchValidation.errors,
-      });
-    }
-
-    const current = await sourceRegistryRepository.getById(sourceId.value);
-    if (!current || current.tenantId !== tenantId) {
-      logger.info('api.sources.update.not_found', {
-        correlationId,
-        statusCode: 404,
-        sourceId: sourceId.value,
-        tenantId,
-      });
-      return response(404, {
-        message: `Source "${sourceId.value}" was not found.`,
-        code: 'SOURCE_NOT_FOUND',
-      });
-    }
-
-    const nextUpdatedAt = now();
-    const nextSchedule = resolveSourceSchedule(current, patchValidation.value);
-    const shouldRecalculateNextRunAt = hasSourceScheduleChanged(current, nextSchedule);
-    const nextRunAt = shouldRecalculateNextRunAt
-      ? calculateNextRunAt(nextSchedule, nextUpdatedAt)
-      : {
-          success: true as const,
-          value: current.nextRunAt,
-        };
-    if (!nextRunAt.success) {
-      logger.info('api.sources.update.rejected', {
-        correlationId,
-        statusCode: 400,
-        sourceId: sourceId.value,
-        reason: 'invalid_schedule',
-      });
-      return response(400, {
-        message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
-        errors: nextRunAt.errors,
-      });
-    }
-
-    const merged = mergeAndValidateSourcePatch(
-      current,
-      patchValidation.value,
-      nextUpdatedAt,
-      nextRunAt.value,
-    );
-    if (!merged.success) {
-      logger.info('api.sources.update.rejected', {
-        correlationId,
-        statusCode: 400,
-        sourceId: sourceId.value,
-        reason: 'merge_validation_error',
-      });
-      return response(400, {
-        message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
-        errors: merged.errors,
-      });
-    }
-
-    try {
-      await sourceRegistryRepository.update({
-        sourceId: current.sourceId,
-        source: merged.value,
-        expectedUpdatedAt: current.updatedAt,
-      });
-
-      logger.info('api.sources.update.succeeded', {
-        correlationId,
-        statusCode: 200,
-        sourceId: merged.value.sourceId,
-      });
-      return response(200, {
-        sourceId: merged.value.sourceId,
-        metadata: {
-          schemaVersion: merged.value.schemaVersion,
-          createdAt: merged.value.createdAt,
-          updatedAt: merged.value.updatedAt,
-          requestId: event.requestContext?.requestId ?? null,
-        },
-      });
-    } catch (error) {
-      if (error instanceof SourceVersionConflictError) {
-        logger.info('api.sources.update.conflict', {
+    return withTelemetrySpan({
+      component: 'api.sources.update',
+      spanName: 'api.sources.update',
+      attributes: buildTelemetryAttributes({
+        executionId: correlationId ?? undefined,
+      }),
+      run: async ({ span, traceContext, runInChildSpan }) => {
+        logger.info('api.sources.update.received', {
           correlationId,
-          statusCode: 409,
-          sourceId: current.sourceId,
         });
-        return response(409, {
-          message: error.message,
-          code: 'SOURCE_VERSION_CONFLICT',
+        logger.info('api.sources.update.trace_context', {
+          correlationId,
+          ...toTelemetryLogContext(traceContext),
         });
-      }
 
-      logger.info('api.sources.update.failed', {
-        correlationId,
-        statusCode: 500,
-        sourceId: current.sourceId,
-      });
-      return response(500, {
-        message: 'Failed to update source.',
-      });
-    }
+        const sourceId = parseSourceId(event.pathParameters?.id);
+        if (!sourceId.success) {
+          logger.info('api.sources.update.rejected', {
+            correlationId,
+            statusCode: sourceId.response.statusCode,
+            reason: 'missing_source_id',
+          });
+          return sourceId.response;
+        }
+        span.setAttribute('sourceId', sourceId.value);
+
+        const parsedBody = parseBody(event.body);
+        if (!parsedBody.success) {
+          logger.info('api.sources.update.rejected', {
+            correlationId,
+            statusCode: parsedBody.response.statusCode,
+            sourceId: sourceId.value,
+            reason: 'invalid_body',
+          });
+          return parsedBody.response;
+        }
+
+        const tenantId = resolveTenantIdFromJwtClaims(event);
+        if (!tenantId) {
+          logger.info('api.sources.update.rejected', {
+            correlationId,
+            statusCode: 401,
+            sourceId: sourceId.value,
+            reason: 'tenant_context_missing',
+          });
+          return response(401, {
+            message: 'Missing tenant context in JWT claims.',
+            code: 'TENANT_CONTEXT_MISSING',
+          });
+        }
+        span.setAttribute('tenantId', tenantId);
+
+        const patchValidation = validateSourcePatchPayload(parsedBody.value);
+        if (!patchValidation.success) {
+          logger.info('api.sources.update.rejected', {
+            correlationId,
+            statusCode: 400,
+            sourceId: sourceId.value,
+            reason: 'validation_error',
+          });
+          return response(400, {
+            message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+            errors: patchValidation.errors,
+          });
+        }
+
+        const current = await runInChildSpan(
+          {
+            spanName: 'api.sources.update.repository.get',
+            attributes: buildTelemetryAttributes({
+              sourceId: sourceId.value,
+              tenantId,
+              executionId: correlationId ?? undefined,
+            }),
+          },
+          async () => sourceRegistryRepository.getById(sourceId.value),
+        );
+        if (!current || current.tenantId !== tenantId) {
+          logger.info('api.sources.update.not_found', {
+            correlationId,
+            statusCode: 404,
+            sourceId: sourceId.value,
+            tenantId,
+          });
+          return response(404, {
+            message: `Source "${sourceId.value}" was not found.`,
+            code: 'SOURCE_NOT_FOUND',
+          });
+        }
+
+        const nextUpdatedAt = now();
+        const nextSchedule = resolveSourceSchedule(current, patchValidation.value);
+        const shouldRecalculateNextRunAt = hasSourceScheduleChanged(current, nextSchedule);
+        const nextRunAt = shouldRecalculateNextRunAt
+          ? calculateNextRunAt(nextSchedule, nextUpdatedAt)
+          : {
+              success: true as const,
+              value: current.nextRunAt,
+            };
+        if (!nextRunAt.success) {
+          logger.info('api.sources.update.rejected', {
+            correlationId,
+            statusCode: 400,
+            sourceId: sourceId.value,
+            reason: 'invalid_schedule',
+          });
+          return response(400, {
+            message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+            errors: nextRunAt.errors,
+          });
+        }
+
+        const merged = mergeAndValidateSourcePatch(
+          current,
+          patchValidation.value,
+          nextUpdatedAt,
+          nextRunAt.value,
+        );
+        if (!merged.success) {
+          logger.info('api.sources.update.rejected', {
+            correlationId,
+            statusCode: 400,
+            sourceId: sourceId.value,
+            reason: 'merge_validation_error',
+          });
+          return response(400, {
+            message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+            errors: merged.errors,
+          });
+        }
+
+        try {
+          await runInChildSpan(
+            {
+              spanName: 'api.sources.update.repository.update',
+              attributes: buildTelemetryAttributes({
+                sourceId: current.sourceId,
+                tenantId,
+                executionId: correlationId ?? undefined,
+              }),
+            },
+            async () =>
+              sourceRegistryRepository.update({
+                sourceId: current.sourceId,
+                source: merged.value,
+                expectedUpdatedAt: current.updatedAt,
+              }),
+          );
+
+          logger.info('api.sources.update.succeeded', {
+            correlationId,
+            statusCode: 200,
+            sourceId: merged.value.sourceId,
+          });
+          return response(200, {
+            sourceId: merged.value.sourceId,
+            metadata: {
+              schemaVersion: merged.value.schemaVersion,
+              createdAt: merged.value.createdAt,
+              updatedAt: merged.value.updatedAt,
+              requestId: event.requestContext?.requestId ?? null,
+            },
+          });
+        } catch (error) {
+          if (error instanceof SourceVersionConflictError) {
+            logger.info('api.sources.update.conflict', {
+              correlationId,
+              statusCode: 409,
+              sourceId: current.sourceId,
+            });
+            return response(409, {
+              message: error.message,
+              code: 'SOURCE_VERSION_CONFLICT',
+            });
+          }
+
+          logger.info('api.sources.update.failed', {
+            correlationId,
+            statusCode: 500,
+            sourceId: current.sourceId,
+          });
+          return response(500, {
+            message: 'Failed to update source.',
+          });
+        }
+      },
+    });
   };
 
 export async function handler(event: UpdateSourceEvent): Promise<UpdateSourceResponse> {

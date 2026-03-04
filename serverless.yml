@@ -20,6 +20,7 @@ provider:
   environment:
     STAGE: ${self:provider.stage}
     SERVICE_NAME: ${self:service}
+    OTEL_SERVICE_NAME: ${env:OTEL_SERVICE_NAME, 'alert-orchestration-service'}
     SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}
     CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
     IDEMPOTENCY_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.idempotencyTableName}

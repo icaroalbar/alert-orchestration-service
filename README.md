@@ -338,6 +338,8 @@ Guia operacional completo: `docs/integrations/dlq-reprocessing.md`.
 
 Playbook de resposta para alarmes operacionais (ingestão + integrações + Step Functions): `docs/observability/operational-alarms-playbook.md`.
 
+Baseline de instrumentação OpenTelemetry para Lambdas críticas (spans, propagação e logs de trace): `docs/observability/open-telemetry-baseline.md`.
+
 ## Ambiente de testes (isolado)
 
 - Runner: `Jest` com `ts-jest` e `testEnvironment: node`.

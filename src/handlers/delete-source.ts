@@ -7,6 +7,11 @@ import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamod
 import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
+import {
+  buildTelemetryAttributes,
+  toTelemetryLogContext,
+  withTelemetrySpan,
+} from '../shared/observability/open-telemetry';
 import { nowIso } from '../shared/time/now-iso';
 
 const JSON_HEADERS = {
@@ -108,74 +113,59 @@ export const createHandler =
       headers: event.headers,
       requestId: event.requestContext?.requestId,
     });
-    logger.info('api.sources.delete.received', {
-      correlationId,
-    });
+    return withTelemetrySpan({
+      component: 'api.sources.delete',
+      spanName: 'api.sources.delete',
+      attributes: buildTelemetryAttributes({
+        executionId: correlationId ?? undefined,
+      }),
+      run: async ({ span, traceContext, runInChildSpan }) => {
+        logger.info('api.sources.delete.received', {
+          correlationId,
+        });
+        logger.info('api.sources.delete.trace_context', {
+          correlationId,
+          ...toTelemetryLogContext(traceContext),
+        });
 
-    const sourceId = parseSourceId(event.pathParameters?.id);
-    if (!sourceId.success) {
-      logger.info('api.sources.delete.rejected', {
-        correlationId,
-        statusCode: sourceId.response.statusCode,
-        reason: 'missing_source_id',
-      });
-      return sourceId.response;
-    }
+        const sourceId = parseSourceId(event.pathParameters?.id);
+        if (!sourceId.success) {
+          logger.info('api.sources.delete.rejected', {
+            correlationId,
+            statusCode: sourceId.response.statusCode,
+            reason: 'missing_source_id',
+          });
+          return sourceId.response;
+        }
+        span.setAttribute('sourceId', sourceId.value);
 
-    const tenantId = resolveTenantIdFromJwtClaims(event);
-    if (!tenantId) {
-      logger.info('api.sources.delete.rejected', {
-        correlationId,
-        statusCode: 401,
-        sourceId: sourceId.value,
-        reason: 'tenant_context_missing',
-      });
-      return response(401, {
-        message: 'Missing tenant context in JWT claims.',
-        code: 'TENANT_CONTEXT_MISSING',
-      });
-    }
+        const tenantId = resolveTenantIdFromJwtClaims(event);
+        if (!tenantId) {
+          logger.info('api.sources.delete.rejected', {
+            correlationId,
+            statusCode: 401,
+            sourceId: sourceId.value,
+            reason: 'tenant_context_missing',
+          });
+          return response(401, {
+            message: 'Missing tenant context in JWT claims.',
+            code: 'TENANT_CONTEXT_MISSING',
+          });
+        }
+        span.setAttribute('tenantId', tenantId);
 
-    const current = await sourceRegistryRepository.getById(sourceId.value);
-    if (!current || current.tenantId !== tenantId) {
-      logger.info('api.sources.delete.not_found', {
-        correlationId,
-        statusCode: 404,
-        sourceId: sourceId.value,
-        tenantId,
-      });
-      return response(404, {
-        message: `Source "${sourceId.value}" was not found.`,
-        code: 'SOURCE_NOT_FOUND',
-      });
-    }
-
-    if (!current.active) {
-      logger.info('api.sources.delete.noop', {
-        correlationId,
-        statusCode: 204,
-        sourceId: sourceId.value,
-      });
-      return noContent();
-    }
-
-    try {
-      const deactivatedSource = deactivateSourceRecord(current, now());
-      await sourceRegistryRepository.update({
-        sourceId: current.sourceId,
-        source: deactivatedSource,
-        expectedUpdatedAt: current.updatedAt,
-      });
-      logger.info('api.sources.delete.succeeded', {
-        correlationId,
-        statusCode: 204,
-        sourceId: current.sourceId,
-      });
-      return noContent();
-    } catch (error) {
-      if (error instanceof SourceVersionConflictError) {
-        const latest = await sourceRegistryRepository.getById(sourceId.value);
-        if (!latest || latest.tenantId !== tenantId) {
+        const current = await runInChildSpan(
+          {
+            spanName: 'api.sources.delete.repository.get',
+            attributes: buildTelemetryAttributes({
+              sourceId: sourceId.value,
+              tenantId,
+              executionId: correlationId ?? undefined,
+            }),
+          },
+          async () => sourceRegistryRepository.getById(sourceId.value),
+        );
+        if (!current || current.tenantId !== tenantId) {
           logger.info('api.sources.delete.not_found', {
             correlationId,
             statusCode: 404,
@@ -188,7 +178,7 @@ export const createHandler =
           });
         }
 
-        if (!latest.active) {
+        if (!current.active) {
           logger.info('api.sources.delete.noop', {
             correlationId,
             statusCode: 204,
@@ -197,26 +187,87 @@ export const createHandler =
           return noContent();
         }
 
-        logger.info('api.sources.delete.conflict', {
-          correlationId,
-          statusCode: 409,
-          sourceId: sourceId.value,
-        });
-        return response(409, {
-          message: error.message,
-          code: 'SOURCE_VERSION_CONFLICT',
-        });
-      }
+        try {
+          const deactivatedSource = deactivateSourceRecord(current, now());
+          await runInChildSpan(
+            {
+              spanName: 'api.sources.delete.repository.update',
+              attributes: buildTelemetryAttributes({
+                sourceId: current.sourceId,
+                tenantId,
+                executionId: correlationId ?? undefined,
+              }),
+            },
+            async () =>
+              sourceRegistryRepository.update({
+                sourceId: current.sourceId,
+                source: deactivatedSource,
+                expectedUpdatedAt: current.updatedAt,
+              }),
+          );
+          logger.info('api.sources.delete.succeeded', {
+            correlationId,
+            statusCode: 204,
+            sourceId: current.sourceId,
+          });
+          return noContent();
+        } catch (error) {
+          if (error instanceof SourceVersionConflictError) {
+            const latest = await runInChildSpan(
+              {
+                spanName: 'api.sources.delete.repository.get_after_conflict',
+                attributes: buildTelemetryAttributes({
+                  sourceId: sourceId.value,
+                  tenantId,
+                  executionId: correlationId ?? undefined,
+                }),
+              },
+              async () => sourceRegistryRepository.getById(sourceId.value),
+            );
+            if (!latest || latest.tenantId !== tenantId) {
+              logger.info('api.sources.delete.not_found', {
+                correlationId,
+                statusCode: 404,
+                sourceId: sourceId.value,
+                tenantId,
+              });
+              return response(404, {
+                message: `Source "${sourceId.value}" was not found.`,
+                code: 'SOURCE_NOT_FOUND',
+              });
+            }
 
-      logger.info('api.sources.delete.failed', {
-        correlationId,
-        statusCode: 500,
-        sourceId: sourceId.value,
-      });
-      return response(500, {
-        message: 'Failed to delete source.',
-      });
-    }
+            if (!latest.active) {
+              logger.info('api.sources.delete.noop', {
+                correlationId,
+                statusCode: 204,
+                sourceId: sourceId.value,
+              });
+              return noContent();
+            }
+
+            logger.info('api.sources.delete.conflict', {
+              correlationId,
+              statusCode: 409,
+              sourceId: sourceId.value,
+            });
+            return response(409, {
+              message: error.message,
+              code: 'SOURCE_VERSION_CONFLICT',
+            });
+          }
+
+          logger.info('api.sources.delete.failed', {
+            correlationId,
+            statusCode: 500,
+            sourceId: sourceId.value,
+          });
+          return response(500, {
+            message: 'Failed to delete source.',
+          });
+        }
+      },
+    });
   };
 
 export async function handler(event: DeleteSourceEvent): Promise<DeleteSourceResponse> {

@@ -108,6 +108,7 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(scheduler.Next).toBe('ProcessEligibleSources');
     const schedulerParameters = asObject(scheduler.Parameters);
     expect(schedulerParameters['now.$']).toBe('$.schedulerInput.now');
+    expect(schedulerParameters['meta.$']).toBe('$.meta');
     const schedulerRetry = scheduler.Retry as unknown[];
     expect(Array.isArray(schedulerRetry)).toBe(true);
     expect(schedulerRetry).toHaveLength(2);
@@ -144,7 +145,15 @@ describe('main-orchestration-v1.asl.json', () => {
     const processEligibleSourcesParameters = asObject(processEligibleSources.Parameters);
     expect(processEligibleSourcesParameters['sourceId.$']).toBe('$$.Map.Item.Value.sourceId');
     expect(processEligibleSourcesParameters['tenantId.$']).toBe('$$.Map.Item.Value.tenantId');
-    expect(processEligibleSourcesParameters['meta.$']).toBe('$.meta');
+    const processEligibleSourcesMeta = asObject(processEligibleSourcesParameters.meta);
+    expect(processEligibleSourcesMeta['executionId.$']).toBe('$.meta.executionId');
+    expect(processEligibleSourcesMeta['stateMachineId.$']).toBe('$.meta.stateMachineId');
+    expect(processEligibleSourcesMeta['startedAt.$']).toBe('$.meta.startedAt');
+    expect(processEligibleSourcesMeta['trigger.$']).toBe('$.meta.trigger');
+    expect(processEligibleSourcesMeta['source.$']).toBe('$.meta.source');
+    expect(processEligibleSourcesMeta['stage.$']).toBe('$.meta.stage');
+    expect(processEligibleSourcesMeta['service.$']).toBe('$.meta.service');
+    expect(processEligibleSourcesMeta['traceContext.$']).toBe('$.schedulerResult.traceContext');
     const iterator = asObject(processEligibleSources.Iterator);
     expect(iterator.StartAt).toBe('InvokeCollector');
     const iteratorStates = asObject(iterator.States);

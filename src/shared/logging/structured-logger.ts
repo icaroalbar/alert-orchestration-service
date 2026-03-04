@@ -6,12 +6,62 @@ export interface StructuredLogger {
   info: (event: string, context?: Record<string, unknown>) => void;
 }
 
+const REDACTED_VALUE = '[REDACTED]';
+const SENSITIVE_KEY_TOKENS = [
+  'password',
+  'passwd',
+  'secret',
+  'token',
+  'apikey',
+  'authorization',
+  'cookie',
+  'email',
+  'phone',
+  'mobile',
+  'cpf',
+  'cnpj',
+  'ssn',
+  'document',
+  'birthdate',
+];
+
+const normalizeKey = (key: string): string => key.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const isSensitiveKey = (key: string): boolean => {
+  const normalizedKey = normalizeKey(key);
+  return SENSITIVE_KEY_TOKENS.some((token) => normalizedKey.includes(token));
+};
+
+const sanitizeValue = (value: unknown, key?: string): unknown => {
+  if (key && isSensitiveKey(key)) {
+    return REDACTED_VALUE;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeValue(item));
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, nestedValue]) => nestedValue !== undefined)
+        .map(([nestedKey, nestedValue]) => [nestedKey, sanitizeValue(nestedValue, nestedKey)]),
+    );
+  }
+
+  return value;
+};
+
 const normalizeContext = (context: Record<string, unknown> | undefined): Record<string, unknown> => {
   if (!context) {
     return {};
   }
 
-  return Object.fromEntries(Object.entries(context).filter(([, value]) => value !== undefined));
+  return sanitizeValue(context) as Record<string, unknown>;
 };
 
 export const createStructuredLogger = ({

@@ -87,6 +87,9 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por integração.
 - Alarmes de DLQ por integração com métrica `AWS/SQS::ApproximateNumberOfMessagesVisible` e limiar por stage (`salesforceDlqAlarmThreshold` e `hubspotDlqAlarmThreshold`).
 - Ações de notificação dos alarmes direcionadas para tópico SNS operacional `${service}-${stage}-dlq-alarms`.
+- Logger estruturado aplica redaction recursiva de PII e segredos antes da serialização dos eventos.
+  - Máscara padrão: `[REDACTED]`.
+  - Política de campos sensíveis: `docs/security/log-redaction-policy-v1.md`.
 - Alarmes operacionais de ingestão e integração conectados ao tópico SNS `${service}-${stage}-operational-alarms`:
   - Erros de Lambda (`Errors`): scheduler, coletora, consumidora Salesforce e consumidora HubSpot.
   - Latência p95 de Lambda (`Duration`): scheduler, coletora, consumidora Salesforce e consumidora HubSpot.

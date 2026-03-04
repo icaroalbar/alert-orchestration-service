@@ -23,6 +23,7 @@ import {
   loadCollectorSourceConfiguration,
   type CollectorSourceConfigurationRepository,
 } from '../domain/collector/load-source-configuration';
+import { mapRecordsWithFieldMap } from '../domain/collector/map-records-with-field-map';
 import { createMySqlQueryExecutorFactory } from '../infra/collector/mysql-query-executor';
 import { createPostgresQueryExecutorFactory } from '../infra/collector/postgres-query-executor';
 import { createDynamoDbCollectorCursorRepository } from '../infra/cursors/dynamodb-collector-cursor-repository';
@@ -550,6 +551,25 @@ export const createHandler =
       recordsCollected: records.length,
     });
 
+    const requiredCanonicalFields = sourceConfiguration.fieldMap.id ? ['id'] : [];
+    const mappingResult = mapRecordsWithFieldMap({
+      sourceId,
+      records,
+      fieldMap: sourceConfiguration.fieldMap,
+      requiredCanonicalFields,
+    });
+
+    const ignoredSourceColumns = mappingResult.ignoredSourceColumns.filter(
+      (sourceColumn) => sourceColumn !== sourceConfiguration.cursorField,
+    );
+    if (ignoredSourceColumns.length > 0) {
+      logger.info('collector.field_map.ignored_source_columns', {
+        sourceId,
+        ignoredColumns: ignoredSourceColumns,
+        ignoredColumnsCount: ignoredSourceColumns.length,
+      });
+    }
+
     const processedAt = now();
     const candidateCursor = resolveLatestCursorFromRecords({
       records,
@@ -578,7 +598,7 @@ export const createHandler =
       sourceId,
       processedAt,
       recordsSent: records.length,
-      records,
+      records: mappingResult.records,
     };
   };
 

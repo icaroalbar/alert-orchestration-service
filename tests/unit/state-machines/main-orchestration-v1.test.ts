@@ -485,6 +485,41 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(summary.maxConcurrency).toBe(5);
   });
 
+  it('materializa contrato de falha quando scheduler interrompe execução antes do Map', () => {
+    const definition = loadDefinition();
+    const states = asObject(definition.States);
+    const buildSchedulerFailureOutput = asObject(states.BuildSchedulerFailureOutput);
+    const buildSchedulerFailureParameters = asObject(buildSchedulerFailureOutput.Parameters);
+
+    const output = asObject(
+      materializeParameters(buildSchedulerFailureParameters, {
+        meta: {
+          executionId: 'exec-failed',
+          stage: 'stg',
+        },
+        schedulerError: {
+          Error: 'States.Timeout',
+          Cause: 'SchedulerLambda timed out',
+        },
+      }),
+    );
+
+    const summary = asObject(output.summary);
+    expect(output.meta).toEqual({
+      executionId: 'exec-failed',
+      stage: 'stg',
+    });
+    expect(output.sources).toEqual([]);
+    expect(output.results).toEqual([]);
+    expect(summary).toEqual({
+      processedSources: 0,
+      eligibleSources: 0,
+      schedulerStatus: 'FAILED',
+      error: 'States.Timeout',
+      cause: 'SchedulerLambda timed out',
+    });
+  });
+
   it('define retries com backoff exponencial e tentativas limitadas nas tasks críticas', () => {
     const definition = loadDefinition();
     const states = asObject(definition.States);

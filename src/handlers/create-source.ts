@@ -8,6 +8,7 @@ import {
   type SourceRegistryRecord,
   type SourceRegistryRepository,
 } from '../domain/sources/source-registry-repository';
+import { calculateNextRunAt } from '../domain/sources/next-run-at';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
 import { nowIso } from '../shared/time/now-iso';
 
@@ -103,8 +104,32 @@ export const createHandler =
     }
 
     const createdAt = now();
+    const nextRunAt =
+      validation.value.scheduleType === 'interval'
+        ? calculateNextRunAt(
+            {
+              scheduleType: 'interval',
+              intervalMinutes: validation.value.intervalMinutes,
+            },
+            createdAt,
+          )
+        : calculateNextRunAt(
+            {
+              scheduleType: 'cron',
+              cronExpr: validation.value.cronExpr,
+            },
+            createdAt,
+          );
+    if (!nextRunAt.success) {
+      return response(400, {
+        message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+        errors: nextRunAt.errors,
+      });
+    }
+
     const record: SourceRegistryRecord = {
       ...validation.value,
+      nextRunAt: nextRunAt.value,
       schemaVersion: SOURCE_SCHEMA_VERSION,
       createdAt,
       updatedAt: createdAt,

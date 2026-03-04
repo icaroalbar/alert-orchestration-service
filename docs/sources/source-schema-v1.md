@@ -17,6 +17,8 @@ Contrato versionado para registro de fontes (`sources`) usado em:
 - `scheduleType` (`interval` ou `cron`)
 - `nextRunAt` (`string`, ISO-8601 UTC)
 
+> Para os endpoints de cadastro/edição, `nextRunAt` é calculado automaticamente no backend com base no schedule.
+
 ## Campos condicionais
 
 - `scheduleType=interval`:

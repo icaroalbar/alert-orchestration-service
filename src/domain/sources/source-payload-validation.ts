@@ -15,7 +15,6 @@ const MUTABLE_FIELDS = [
   'scheduleType',
   'intervalMinutes',
   'cronExpr',
-  'nextRunAt',
 ] as const;
 const KNOWN_FIELDS = new Set<string>([...IMMUTABLE_FIELDS, ...MUTABLE_FIELDS]);
 
@@ -30,8 +29,19 @@ export interface SourcePatchPayload {
   scheduleType?: 'interval' | 'cron';
   intervalMinutes?: number;
   cronExpr?: string;
-  nextRunAt?: string;
 }
+
+export type ResolvedSourceSchedule =
+  | {
+      scheduleType: 'interval';
+      intervalMinutes: number;
+      cronExpr?: undefined;
+    }
+  | {
+      scheduleType: 'cron';
+      intervalMinutes?: undefined;
+      cronExpr: string;
+    };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -40,7 +50,19 @@ export const validateSourceCreatePayload = (
   payload: unknown,
 ):
   | { success: true; value: SourceSchemaV1 }
-  | { success: false; errors: SourceSchemaValidationError[] } => validateSourceSchemaV1(payload);
+  | { success: false; errors: SourceSchemaValidationError[] } => {
+  if (!isRecord(payload)) {
+    return validateSourceSchemaV1(payload);
+  }
+
+  // `nextRunAt` is controlled by the backend at runtime.
+  const payloadWithoutNextRunAt = { ...payload };
+  delete payloadWithoutNextRunAt.nextRunAt;
+  return validateSourceSchemaV1({
+    ...payloadWithoutNextRunAt,
+    nextRunAt: new Date(0).toISOString(),
+  });
+};
 
 export const validateSourcePatchPayload = (
   payload: unknown,
@@ -112,19 +134,11 @@ export const mergeAndValidateSourcePatch = (
   current: SourceRegistryRecord,
   patch: SourcePatchPayload,
   nextUpdatedAt: string,
+  nextRunAt: string,
 ):
   | { success: true; value: SourceRegistryRecord }
   | { success: false; errors: SourceSchemaValidationError[] } => {
-  const nextScheduleType = patch.scheduleType ?? current.scheduleType;
-  const nextIntervalMinutes =
-    nextScheduleType === 'interval'
-      ? (patch.intervalMinutes ??
-        (current.scheduleType === 'interval' ? current.intervalMinutes : undefined))
-      : patch.intervalMinutes;
-  const nextCronExpr =
-    nextScheduleType === 'cron'
-      ? (patch.cronExpr ?? (current.scheduleType === 'cron' ? current.cronExpr : undefined))
-      : patch.cronExpr;
+  const nextSchedule = resolveSourceSchedule(current, patch);
 
   const validation = validateSourceSchemaV1({
     sourceId: current.sourceId,
@@ -134,10 +148,10 @@ export const mergeAndValidateSourcePatch = (
     query: patch.query ?? current.query,
     cursorField: patch.cursorField ?? current.cursorField,
     fieldMap: patch.fieldMap ?? current.fieldMap,
-    scheduleType: nextScheduleType,
-    intervalMinutes: nextIntervalMinutes,
-    cronExpr: nextCronExpr,
-    nextRunAt: patch.nextRunAt ?? current.nextRunAt,
+    scheduleType: nextSchedule.scheduleType,
+    intervalMinutes: nextSchedule.intervalMinutes,
+    cronExpr: nextSchedule.cronExpr,
+    nextRunAt,
   });
 
   if (!validation.success) {
@@ -156,4 +170,47 @@ export const mergeAndValidateSourcePatch = (
       updatedAt: nextUpdatedAt,
     },
   };
+};
+
+export const resolveSourceSchedule = (
+  current: SourceRegistryRecord,
+  patch: SourcePatchPayload,
+): ResolvedSourceSchedule => {
+  const nextScheduleType = patch.scheduleType ?? current.scheduleType;
+  if (nextScheduleType === 'interval') {
+    const nextIntervalMinutes =
+      patch.intervalMinutes ??
+      (current.scheduleType === 'interval' ? current.intervalMinutes : undefined);
+
+    return {
+      scheduleType: 'interval',
+      intervalMinutes: nextIntervalMinutes as number,
+    };
+  }
+
+  const nextCronExpr =
+    patch.cronExpr ?? (current.scheduleType === 'cron' ? current.cronExpr : undefined);
+
+  return {
+    scheduleType: 'cron',
+    cronExpr: nextCronExpr as string,
+  };
+};
+
+export const hasSourceScheduleChanged = (
+  current: SourceRegistryRecord,
+  nextSchedule: ResolvedSourceSchedule,
+): boolean => {
+  if (current.scheduleType !== nextSchedule.scheduleType) {
+    return true;
+  }
+
+  if (nextSchedule.scheduleType === 'interval') {
+    return (
+      current.scheduleType !== 'interval' ||
+      current.intervalMinutes !== nextSchedule.intervalMinutes
+    );
+  }
+
+  return current.scheduleType !== 'cron' || current.cronExpr !== nextSchedule.cronExpr;
 };

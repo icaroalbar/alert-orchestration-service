@@ -98,7 +98,6 @@ describe('update-source handler', () => {
       pathParameters: { id: EXISTING_SOURCE.sourceId },
       body: JSON.stringify({
         active: false,
-        nextRunAt: '2026-03-03T12:30:00.000Z',
       }),
       requestContext: { requestId: 'req-41' },
     });
@@ -119,9 +118,32 @@ describe('update-source handler', () => {
       sourceId: 'source-acme',
       engine: 'postgres',
       active: false,
-      nextRunAt: '2026-03-03T12:30:00.000Z',
+      nextRunAt: '2026-03-03T10:00:00.000Z',
       createdAt: '2026-03-03T09:00:00.000Z',
       updatedAt: '2026-03-03T12:00:00.000Z',
+    });
+  });
+
+  it('recalculates nextRunAt when interval schedule is updated', async () => {
+    const repository = new SpySourceRegistryRepository([EXISTING_SOURCE]);
+    const handler = createHandler({
+      sourceRegistryRepository: repository,
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      pathParameters: { id: EXISTING_SOURCE.sourceId },
+      body: JSON.stringify({
+        intervalMinutes: 45,
+      }),
+    });
+
+    expect(result.statusCode).toBe(200);
+    const stored = repository.getSnapshot(EXISTING_SOURCE.sourceId);
+    expect(stored).toMatchObject({
+      scheduleType: 'interval',
+      intervalMinutes: 45,
+      nextRunAt: '2026-03-03T12:45:00.000Z',
     });
   });
 
@@ -164,6 +186,28 @@ describe('update-source handler', () => {
     };
     expect(parsed.message).toBe('Source payload validation failed.');
     expect(parsed.errors.some((entry) => entry.field === 'sourceId')).toBe(true);
+  });
+
+  it('returns 400 when payload tries to update nextRunAt directly', async () => {
+    const handler = createHandler({
+      sourceRegistryRepository: new SpySourceRegistryRepository([EXISTING_SOURCE]),
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      pathParameters: { id: EXISTING_SOURCE.sourceId },
+      body: JSON.stringify({
+        nextRunAt: '2026-03-03T12:30:00.000Z',
+      }),
+    });
+
+    expect(result.statusCode).toBe(400);
+    const parsed = JSON.parse(result.body) as {
+      message: string;
+      errors: Array<{ field: string }>;
+    };
+    expect(parsed.message).toBe('Source payload validation failed.');
+    expect(parsed.errors.some((entry) => entry.field === 'nextRunAt')).toBe(true);
   });
 
   it('returns 409 when update detects version conflict', async () => {
@@ -227,6 +271,7 @@ describe('update-source handler', () => {
       sourceId: 'source-acme',
       scheduleType: 'cron',
       cronExpr: '0 */15 * * *',
+      nextRunAt: '2026-03-03T15:00:00.000Z',
     });
     expect(stored?.intervalMinutes).toBeUndefined();
   });

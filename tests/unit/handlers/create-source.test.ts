@@ -20,7 +20,6 @@ const VALID_INTERVAL_SOURCE = {
   },
   scheduleType: 'interval',
   intervalMinutes: 30,
-  nextRunAt: '2026-03-03T10:00:00.000Z',
 } as const;
 
 class SpySourceRegistryRepository implements SourceRegistryRepository {
@@ -81,10 +80,31 @@ describe('create-source handler', () => {
     expect(repository.created).toHaveLength(1);
     expect(repository.created[0]).toMatchObject({
       sourceId: 'source-acme',
+      nextRunAt: '2026-03-03T12:30:00.000Z',
       schemaVersion: '1.0.0',
       createdAt: '2026-03-03T12:00:00.000Z',
       updatedAt: '2026-03-03T12:00:00.000Z',
     });
+  });
+
+  it('calculates nextRunAt for cron schedules in UTC', async () => {
+    const repository = new SpySourceRegistryRepository();
+    const handler = createHandler({
+      sourceRegistryRepository: repository,
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      body: JSON.stringify({
+        ...VALID_INTERVAL_SOURCE,
+        scheduleType: 'cron',
+        intervalMinutes: undefined,
+        cronExpr: '0 */15 * * * *',
+      }),
+    });
+
+    expect(result.statusCode).toBe(201);
+    expect(repository.created[0]?.nextRunAt).toBe('2026-03-03T12:15:00.000Z');
   });
 
   it('returns 400 when payload validation fails', async () => {
@@ -160,5 +180,34 @@ describe('create-source handler', () => {
     expect(JSON.parse(result.body)).toEqual({
       message: 'Failed to create source.',
     });
+  });
+
+  it('returns 400 when cron expression is invalid', async () => {
+    const handler = createHandler({
+      sourceRegistryRepository: new SpySourceRegistryRepository(),
+      now: () => '2026-03-03T12:00:00.000Z',
+    });
+
+    const result = await handler({
+      body: JSON.stringify({
+        ...VALID_INTERVAL_SOURCE,
+        scheduleType: 'cron',
+        intervalMinutes: undefined,
+        cronExpr: 'invalid cron',
+      }),
+    });
+
+    expect(result.statusCode).toBe(400);
+    const parsedBody = JSON.parse(result.body) as {
+      message: string;
+      errors: Array<{ field: string; code: string }>;
+    };
+    expect(parsedBody.message).toBe('Source payload validation failed.');
+    expect(parsedBody.errors).toContainEqual(
+      expect.objectContaining({
+        field: 'cronExpr',
+        code: 'INVALID_FORMAT',
+      }),
+    );
   });
 });

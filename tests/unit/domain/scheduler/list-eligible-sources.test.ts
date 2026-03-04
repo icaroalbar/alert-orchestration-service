@@ -22,7 +22,7 @@ class SpySourceRepository implements SourceRepository {
 }
 
 describe('listEligibleSources', () => {
-  it('loads all pages and forwards now reference', async () => {
+  it('loads all pages, forwards now reference and keeps only nextRunAt <= now', async () => {
     const repository = new SpySourceRepository([
       {
         items: [{ sourceId: 'source-a', nextRunAt: '2026-03-04T09:00:00.000Z' }],
@@ -37,27 +37,27 @@ describe('listEligibleSources', () => {
     const result = await listEligibleSources({
       sourceRepository: repository,
       pageSize: 1,
-      now: '2026-03-04T08:00:00.000Z',
+      now: '2026-03-04T09:01:00.000Z',
     });
 
     expect(repository.calls).toEqual([
-      { limit: 1, nextToken: undefined, now: '2026-03-04T08:00:00.000Z' },
-      { limit: 1, nextToken: 'page-2', now: '2026-03-04T08:00:00.000Z' },
+      { limit: 1, nextToken: undefined, now: '2026-03-04T09:01:00.000Z' },
+      { limit: 1, nextToken: 'page-2', now: '2026-03-04T09:01:00.000Z' },
     ]);
-    expect(result).toEqual([
-      { sourceId: 'source-a', nextRunAt: '2026-03-04T09:00:00.000Z' },
-      { sourceId: 'source-b', nextRunAt: '2026-03-04T09:05:00.000Z' },
-    ]);
+    expect(result).toEqual([{ sourceId: 'source-a', nextRunAt: '2026-03-04T09:00:00.000Z' }]);
   });
 
-  it('deduplicates repeated sourceIds across pages', async () => {
+  it('deduplicates repeated sourceIds across pages after eligibility filtering', async () => {
     const repository = new SpySourceRepository([
       {
-        items: [{ sourceId: 'source-a', nextRunAt: '2026-03-04T09:00:00.000Z' }],
+        items: [{ sourceId: 'source-a', nextRunAt: '2026-03-04T08:55:00.000Z' }],
         nextToken: 'page-2',
       },
       {
-        items: [{ sourceId: 'source-a', nextRunAt: '2026-03-04T09:00:00.000Z' }],
+        items: [
+          { sourceId: 'source-a', nextRunAt: '2026-03-04T08:55:00.000Z' },
+          { sourceId: 'source-b', nextRunAt: '2026-03-04T09:10:00.000Z' },
+        ],
         nextToken: null,
       },
     ]);
@@ -65,9 +65,10 @@ describe('listEligibleSources', () => {
     const result = await listEligibleSources({
       sourceRepository: repository,
       pageSize: 1,
+      now: '2026-03-04T09:00:00.000Z',
     });
 
-    expect(result).toEqual([{ sourceId: 'source-a', nextRunAt: '2026-03-04T09:00:00.000Z' }]);
+    expect(result).toEqual([{ sourceId: 'source-a', nextRunAt: '2026-03-04T08:55:00.000Z' }]);
   });
 
   it('throws when repository returns invalid normalized source', async () => {
@@ -95,5 +96,17 @@ describe('listEligibleSources', () => {
         pageSize: 0,
       }),
     ).rejects.toThrow('pageSize must be an integer greater than zero.');
+  });
+
+  it('throws when now is not a valid UTC ISO-8601 timestamp', async () => {
+    const repository = new SpySourceRepository([{ items: [], nextToken: null }]);
+
+    await expect(
+      listEligibleSources({
+        sourceRepository: repository,
+        pageSize: 1,
+        now: '2026-03-04T09:00:00',
+      }),
+    ).rejects.toThrow('Invalid scheduler reference time: now must use ISO-8601 UTC format.');
   });
 });

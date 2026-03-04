@@ -91,18 +91,24 @@ const getDefaultDependencies = (): SchedulerDependencies => {
 export const createHandler =
   ({ sourceRepository, now, activeSourcesPageSize }: SchedulerDependencies) =>
   async (event: SchedulerEvent = {}): Promise<SchedulerResult> => {
+    const generatedAt = now();
+    const referenceNow = event.now ?? generatedAt;
     const sources = await listEligibleSources({
       sourceRepository,
-      now: event.now,
+      now: referenceNow,
       pageSize: activeSourcesPageSize,
     });
 
     const sourceIds = sources.map((source) => source.sourceId);
     const maxConcurrency = resolveMapMaxConcurrency(process.env.MAP_MAX_CONCURRENCY);
+    console.info('scheduler.eligible_sources.filtered', {
+      referenceNow,
+      eligibleSources: sourceIds.length,
+    });
 
     return {
       sourceIds,
-      generatedAt: now(),
+      generatedAt,
       maxConcurrency,
     };
   };

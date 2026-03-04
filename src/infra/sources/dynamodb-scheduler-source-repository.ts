@@ -86,19 +86,38 @@ export function createDynamoDbSchedulerSourceRepository({
     async listActiveSources({
       limit,
       nextToken,
+      now,
     }: ListActiveSourcesParams): Promise<ListActiveSourcesResult> {
+      const normalizedNow = now?.trim();
+      const hasReferenceNow = typeof normalizedNow === 'string' && normalizedNow.length > 0;
       const command = new QueryCommand({
         TableName: resolvedTableName,
         IndexName: resolvedActiveIndexName,
-        KeyConditionExpression: '#active = :active',
-        ExpressionAttributeNames: {
-          '#active': 'active',
-        },
-        ExpressionAttributeValues: {
-          ':active': {
-            S: 'true',
-          },
-        },
+        KeyConditionExpression: hasReferenceNow
+          ? '#active = :active AND #nextRunAt <= :nextRunAt'
+          : '#active = :active',
+        ExpressionAttributeNames: hasReferenceNow
+          ? {
+              '#active': 'active',
+              '#nextRunAt': 'nextRunAt',
+            }
+          : {
+              '#active': 'active',
+            },
+        ExpressionAttributeValues: hasReferenceNow
+          ? {
+              ':active': {
+                S: 'true',
+              },
+              ':nextRunAt': {
+                S: normalizedNow,
+              },
+            }
+          : {
+              ':active': {
+                S: 'true',
+              },
+            },
         ProjectionExpression: 'sourceId, nextRunAt',
         ExclusiveStartKey: nextToken ? decodeToken(nextToken) : undefined,
         Limit: limit,

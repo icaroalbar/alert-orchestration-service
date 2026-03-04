@@ -10,6 +10,8 @@ import {
 } from '../domain/sources/source-registry-repository';
 import { calculateNextRunAt } from '../domain/sources/next-run-at';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveCorrelationId } from '../shared/logging/correlation-id';
+import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
 
 const JSON_HEADERS = {
@@ -18,6 +20,7 @@ const JSON_HEADERS = {
 
 export interface CreateSourceEvent {
   body?: string | null;
+  headers?: Record<string, string | undefined>;
   requestContext?: {
     requestId?: string;
   };
@@ -35,6 +38,9 @@ export interface CreateSourceDependencies {
 }
 
 let cachedDefaultDependencies: CreateSourceDependencies | undefined;
+const logger = createStructuredLogger({
+  component: 'api.sources.create',
+});
 
 const response = (statusCode: number, payload: unknown): CreateSourceResponse => ({
   statusCode,
@@ -90,13 +96,31 @@ const getDefaultDependencies = (): CreateSourceDependencies => {
 export const createHandler =
   ({ sourceRegistryRepository, now }: CreateSourceDependencies) =>
   async (event: CreateSourceEvent): Promise<CreateSourceResponse> => {
+    const correlationId = resolveCorrelationId({
+      headers: event.headers,
+      requestId: event.requestContext?.requestId,
+    });
+    logger.info('api.sources.create.received', {
+      correlationId,
+    });
+
     const parsedBody = parseBody(event.body);
     if (!parsedBody.success) {
+      logger.info('api.sources.create.rejected', {
+        correlationId,
+        statusCode: parsedBody.response.statusCode,
+        reason: 'invalid_body',
+      });
       return parsedBody.response;
     }
 
     const validation = validateSourceCreatePayload(parsedBody.value);
     if (!validation.success) {
+      logger.info('api.sources.create.rejected', {
+        correlationId,
+        statusCode: 400,
+        reason: 'validation_error',
+      });
       return response(400, {
         message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
         errors: validation.errors,
@@ -121,6 +145,11 @@ export const createHandler =
             createdAt,
           );
     if (!nextRunAt.success) {
+      logger.info('api.sources.create.rejected', {
+        correlationId,
+        statusCode: 400,
+        reason: 'invalid_schedule',
+      });
       return response(400, {
         message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
         errors: nextRunAt.errors,
@@ -137,6 +166,11 @@ export const createHandler =
 
     try {
       await sourceRegistryRepository.create(record);
+      logger.info('api.sources.create.succeeded', {
+        correlationId,
+        statusCode: 201,
+        sourceId: record.sourceId,
+      });
       return response(201, {
         sourceId: record.sourceId,
         metadata: {
@@ -148,12 +182,22 @@ export const createHandler =
       });
     } catch (error) {
       if (error instanceof SourceAlreadyExistsError) {
+        logger.info('api.sources.create.conflict', {
+          correlationId,
+          statusCode: 409,
+          sourceId: record.sourceId,
+        });
         return response(409, {
           message: error.message,
           code: 'SOURCE_ALREADY_EXISTS',
         });
       }
 
+      logger.info('api.sources.create.failed', {
+        correlationId,
+        statusCode: 500,
+        sourceId: record.sourceId,
+      });
       return response(500, {
         message: 'Failed to create source.',
       });

@@ -45,6 +45,7 @@ import { createDynamoDbCollectorIdempotencyRepository } from '../infra/idempoten
 import { createSecretsManagerSecretRepository } from '../infra/secrets/secrets-manager-secret-repository';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
 import { createSnsCustomerEventsPublisher, type CustomerEventsPublisher } from '../infra/events/sns-customer-events-publisher';
+import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
 
 const COLLECTOR_SECRET_RETRY_MAX_ATTEMPTS_DEFAULT = 3;
@@ -674,7 +675,9 @@ const getDefaultDependencies = (): CollectorDependencies => {
     idempotencyTtlSeconds: resolveCollectorIdempotencyTtlSeconds(
       process.env.COLLECTOR_IDEMPOTENCY_TTL_SECONDS,
     ),
-    logger: console,
+    logger: createStructuredLogger({
+      component: 'collector',
+    }),
   };
 
   return cachedDefaultDependencies;

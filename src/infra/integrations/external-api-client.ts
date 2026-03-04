@@ -1,4 +1,5 @@
 import type { IntegrationConsumerPayload } from '../../handlers/shared/create-integration-consumer-handler';
+import { createStructuredLogger } from '../../shared/logging/structured-logger';
 
 export class IntegrationExternalApiPermanentError extends Error {
   constructor(
@@ -66,6 +67,11 @@ export const createIntegrationExternalApiClient = ({
   if (normalizedTargetBaseUrl.length === 0) {
     throw new Error('targetBaseUrl is required for external API client.');
   }
+  const structuredLogger = logger === console
+    ? createStructuredLogger({
+        component: `integration-external-api:${normalizedIntegrationName}`,
+      })
+    : logger;
 
   return async ({ payload, messageId }: SendIntegrationCustomerEventParams): Promise<void> => {
     const startedAt = nowMs();
@@ -88,9 +94,10 @@ export const createIntegrationExternalApiClient = ({
       timeoutMs,
     });
     const durationMs = nowMs() - startedAt;
-    logger.info('integration.external_api.call_completed', {
+    structuredLogger.info('integration.external_api.call_completed', {
       integrationName: normalizedIntegrationName,
       messageId,
+      correlationId: payload.correlationId,
       statusCode: response.status,
       durationMs,
     });

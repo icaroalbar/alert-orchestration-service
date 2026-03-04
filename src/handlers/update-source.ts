@@ -11,6 +11,8 @@ import {
 } from '../domain/sources/source-payload-validation';
 import { calculateNextRunAt } from '../domain/sources/next-run-at';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveCorrelationId } from '../shared/logging/correlation-id';
+import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
 
 const JSON_HEADERS = {
@@ -19,6 +21,7 @@ const JSON_HEADERS = {
 
 export interface UpdateSourceEvent {
   body?: string | null;
+  headers?: Record<string, string | undefined>;
   pathParameters?: {
     id?: string;
   };
@@ -39,6 +42,9 @@ export interface UpdateSourceDependencies {
 }
 
 let cachedDefaultDependencies: UpdateSourceDependencies | undefined;
+const logger = createStructuredLogger({
+  component: 'api.sources.update',
+});
 
 const response = (statusCode: number, payload: unknown): UpdateSourceResponse => ({
   statusCode,
@@ -112,18 +118,43 @@ const getDefaultDependencies = (): UpdateSourceDependencies => {
 export const createHandler =
   ({ sourceRegistryRepository, now }: UpdateSourceDependencies) =>
   async (event: UpdateSourceEvent): Promise<UpdateSourceResponse> => {
+    const correlationId = resolveCorrelationId({
+      headers: event.headers,
+      requestId: event.requestContext?.requestId,
+    });
+    logger.info('api.sources.update.received', {
+      correlationId,
+    });
+
     const sourceId = parseSourceId(event.pathParameters?.id);
     if (!sourceId.success) {
+      logger.info('api.sources.update.rejected', {
+        correlationId,
+        statusCode: sourceId.response.statusCode,
+        reason: 'missing_source_id',
+      });
       return sourceId.response;
     }
 
     const parsedBody = parseBody(event.body);
     if (!parsedBody.success) {
+      logger.info('api.sources.update.rejected', {
+        correlationId,
+        statusCode: parsedBody.response.statusCode,
+        sourceId: sourceId.value,
+        reason: 'invalid_body',
+      });
       return parsedBody.response;
     }
 
     const patchValidation = validateSourcePatchPayload(parsedBody.value);
     if (!patchValidation.success) {
+      logger.info('api.sources.update.rejected', {
+        correlationId,
+        statusCode: 400,
+        sourceId: sourceId.value,
+        reason: 'validation_error',
+      });
       return response(400, {
         message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
         errors: patchValidation.errors,
@@ -132,6 +163,11 @@ export const createHandler =
 
     const current = await sourceRegistryRepository.getById(sourceId.value);
     if (!current) {
+      logger.info('api.sources.update.not_found', {
+        correlationId,
+        statusCode: 404,
+        sourceId: sourceId.value,
+      });
       return response(404, {
         message: `Source "${sourceId.value}" was not found.`,
         code: 'SOURCE_NOT_FOUND',
@@ -148,6 +184,12 @@ export const createHandler =
           value: current.nextRunAt,
         };
     if (!nextRunAt.success) {
+      logger.info('api.sources.update.rejected', {
+        correlationId,
+        statusCode: 400,
+        sourceId: sourceId.value,
+        reason: 'invalid_schedule',
+      });
       return response(400, {
         message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
         errors: nextRunAt.errors,
@@ -161,6 +203,12 @@ export const createHandler =
       nextRunAt.value,
     );
     if (!merged.success) {
+      logger.info('api.sources.update.rejected', {
+        correlationId,
+        statusCode: 400,
+        sourceId: sourceId.value,
+        reason: 'merge_validation_error',
+      });
       return response(400, {
         message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
         errors: merged.errors,
@@ -174,6 +222,11 @@ export const createHandler =
         expectedUpdatedAt: current.updatedAt,
       });
 
+      logger.info('api.sources.update.succeeded', {
+        correlationId,
+        statusCode: 200,
+        sourceId: merged.value.sourceId,
+      });
       return response(200, {
         sourceId: merged.value.sourceId,
         metadata: {
@@ -185,12 +238,22 @@ export const createHandler =
       });
     } catch (error) {
       if (error instanceof SourceVersionConflictError) {
+        logger.info('api.sources.update.conflict', {
+          correlationId,
+          statusCode: 409,
+          sourceId: current.sourceId,
+        });
         return response(409, {
           message: error.message,
           code: 'SOURCE_VERSION_CONFLICT',
         });
       }
 
+      logger.info('api.sources.update.failed', {
+        correlationId,
+        statusCode: 500,
+        sourceId: current.sourceId,
+      });
       return response(500, {
         message: 'Failed to update source.',
       });

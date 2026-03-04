@@ -47,7 +47,7 @@ afterEach(() => {
 describe('scheduler handler', () => {
   it('returns only reserved sourceIds and logs filtered count with default max concurrency', async () => {
     delete process.env.MAP_MAX_CONCURRENCY;
-    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+    const logger = { info: jest.fn() };
     const repository = new SpySourceRepository([
       {
         items: [
@@ -83,6 +83,7 @@ describe('scheduler handler', () => {
       sourceRepository: repository,
       now: () => '2026-03-04T10:00:00.000Z',
       activeSourcesPageSize: 2,
+      logger,
     });
 
     const result = await handler({
@@ -122,9 +123,10 @@ describe('scheduler handler', () => {
     expect(result.referenceNow).toBe('2026-03-04T09:01:00.000Z');
     expect(result.generatedAt).toBe('2026-03-04T10:00:00.000Z');
     expect(result.maxConcurrency).toBe(5);
-    expect(infoSpy).toHaveBeenCalledWith('scheduler.eligible_sources.filtered', {
+    expect(logger.info).toHaveBeenCalledWith('scheduler.eligible_sources.filtered', {
       referenceNow: '2026-03-04T09:01:00.000Z',
       eligibleSources: 2,
+      correlationId: null,
     });
   });
 
@@ -155,6 +157,7 @@ describe('scheduler handler', () => {
       sourceRepository: repository,
       now: () => '2026-03-04T09:00:00.000Z',
       activeSourcesPageSize: 10,
+      logger: { info: jest.fn() },
     });
 
     const result = await handler();
@@ -193,6 +196,7 @@ describe('scheduler handler', () => {
       sourceRepository: repository,
       now: () => '2026-03-04T09:00:00.000Z',
       activeSourcesPageSize: 10,
+      logger: { info: jest.fn() },
     });
 
     const result = await handler();
@@ -213,6 +217,7 @@ describe('scheduler handler', () => {
       sourceRepository: repository,
       now: () => '2026-03-04T10:00:00.000Z',
       activeSourcesPageSize: 10,
+      logger: { info: jest.fn() },
     });
 
     const result = await handler();
@@ -250,6 +255,7 @@ describe('scheduler handler', () => {
       sourceRepository: repository,
       now: () => '2026-03-04T10:00:00.000Z',
       activeSourcesPageSize: 10,
+      logger: { info: jest.fn() },
     });
 
     const result = await handler();
@@ -284,6 +290,7 @@ describe('scheduler handler', () => {
       sourceRepository: repository,
       now: () => '2026-03-04T10:00:00.000Z',
       activeSourcesPageSize: 10,
+      logger: { info: jest.fn() },
     });
 
     await expect(handler()).rejects.toThrow(

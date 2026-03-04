@@ -1,6 +1,7 @@
 import type { SourceRepository } from '../domain/scheduler/list-eligible-sources';
 import { listEligibleSources } from '../domain/scheduler/list-eligible-sources';
 import { createDynamoDbSchedulerSourceRepository } from '../infra/sources/dynamodb-scheduler-source-repository';
+import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
 
 const MAP_MAX_CONCURRENCY_DEFAULT = 5;
@@ -12,6 +13,9 @@ const ACTIVE_SOURCES_PAGE_SIZE_MAX = 200;
 
 export interface SchedulerEvent {
   now?: string;
+  meta?: {
+    executionId?: string;
+  };
 }
 
 export interface SchedulerResult {
@@ -28,6 +32,7 @@ export interface SchedulerDependencies {
   sourceRepository: SourceRepository;
   now: () => string;
   activeSourcesPageSize: number;
+  logger: Pick<typeof console, 'info'>;
 }
 
 let cachedDefaultDependencies: SchedulerDependencies | undefined;
@@ -88,13 +93,16 @@ const getDefaultDependencies = (): SchedulerDependencies => {
     activeSourcesPageSize: resolveActiveSourcesPageSize(
       process.env.SCHEDULER_ACTIVE_SOURCES_PAGE_SIZE,
     ),
+    logger: createStructuredLogger({
+      component: 'scheduler',
+    }),
   };
 
   return cachedDefaultDependencies;
 };
 
 export const createHandler =
-  ({ sourceRepository, now, activeSourcesPageSize }: SchedulerDependencies) =>
+  ({ sourceRepository, now, activeSourcesPageSize, logger }: SchedulerDependencies) =>
   async (event: SchedulerEvent = {}): Promise<SchedulerResult> => {
     const generatedAt = now();
     const referenceNow = event.now ?? generatedAt;
@@ -107,9 +115,10 @@ export const createHandler =
     const sourceIds = sources.map((source) => source.sourceId);
     const eligibleSources = sourceIds.length;
     const maxConcurrency = resolveMapMaxConcurrency(process.env.MAP_MAX_CONCURRENCY);
-    console.info('scheduler.eligible_sources.filtered', {
+    logger.info('scheduler.eligible_sources.filtered', {
       referenceNow,
       eligibleSources,
+      correlationId: event.meta?.executionId?.trim() || null,
     });
 
     return {

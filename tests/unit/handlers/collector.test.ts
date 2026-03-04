@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
+import type { PostgresQueryExecutor } from '../../../src/domain/collector/collect-postgres-records';
 import {
   CollectorSourceConfigInvalidError,
   CollectorSourceInactiveError,
@@ -8,9 +9,10 @@ import {
 import {
   CollectorSecretNotFoundError,
   type CollectorSecretRetryPolicy,
+  type CollectorSourceCredentials,
 } from '../../../src/domain/collector/load-source-credentials';
 import type { SourceRegistryRecord } from '../../../src/domain/sources/source-registry-repository';
-import { createHandler } from '../../../src/handlers/collector';
+import { createHandler, type CollectorDependencies } from '../../../src/handlers/collector';
 
 const VALID_SOURCE: SourceRegistryRecord = {
   sourceId: 'source-acme',
@@ -53,6 +55,24 @@ class SpySecretRepository {
   }
 }
 
+class SpyPostgresQueryExecutorFactory {
+  public readonly createCalls: CollectorSourceCredentials[] = [];
+  public readonly queryCalls: Array<{ sql: string; values: readonly unknown[] }> = [];
+
+  constructor(private readonly rowsToReturn: readonly Record<string, unknown>[]) {}
+
+  create = (credentials: CollectorSourceCredentials): PostgresQueryExecutor => {
+    this.createCalls.push(credentials);
+
+    return {
+      query: (sql: string, values: readonly unknown[]) => {
+        this.queryCalls.push({ sql, values });
+        return Promise.resolve(this.rowsToReturn);
+      },
+    };
+  };
+}
+
 class SpyLogger {
   public readonly infoCalls: unknown[][] = [];
 
@@ -67,8 +87,38 @@ const DEFAULT_SECRET_RETRY_POLICY: CollectorSecretRetryPolicy = {
   backoffRate: 2,
 };
 
+const createCollectorHandler = ({
+  sourceRegistryRepository,
+  secretRepository,
+  postgresQueryExecutorFactory,
+  logger,
+}: {
+  sourceRegistryRepository: SpySourceRegistryRepository;
+  secretRepository: SpySecretRepository;
+  postgresQueryExecutorFactory: SpyPostgresQueryExecutorFactory;
+  logger?: SpyLogger;
+}) => {
+  let nowMsCalls = 0;
+  const dependencies: CollectorDependencies = {
+    sourceRegistryRepository,
+    secretRepository,
+    postgresQueryExecutorFactory: postgresQueryExecutorFactory.create,
+    secretRetryPolicy: DEFAULT_SECRET_RETRY_POLICY,
+    defaultCursorValue: '2026-03-01T00:00:00.000Z',
+    now: () => '2026-03-04T11:00:00.000Z',
+    nowMs: () => {
+      nowMsCalls += 1;
+      return nowMsCalls === 1 ? 1000 : 1030;
+    },
+    sleep: () => Promise.resolve(),
+    logger: logger ?? new SpyLogger(),
+  };
+
+  return createHandler(dependencies);
+};
+
 describe('collector handler', () => {
-  it('loads source config and returns standardized result for a valid sourceId', async () => {
+  it('loads source config, runs postgres incremental query and returns standardized result', async () => {
     const repository = new SpySourceRegistryRepository(
       new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
     );
@@ -86,28 +136,54 @@ describe('collector handler', () => {
         ],
       ]),
     );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        customer_id: 10,
+        email: 'first@example.com',
+        updated_at: new Date('2026-03-04T10:10:00.000Z'),
+      },
+      {
+        customer_id: 11,
+        email: 'second@example.com',
+        updated_at: new Date('2026-03-04T10:20:00.000Z'),
+      },
+    ]);
     const logger = new SpyLogger();
-    let nowMsCalls = 0;
-    const handler = createHandler({
+
+    const handler = createCollectorHandler({
       sourceRegistryRepository: repository,
       secretRepository: secrets,
-      secretRetryPolicy: DEFAULT_SECRET_RETRY_POLICY,
-      now: () => '2026-03-04T11:00:00.000Z',
-      nowMs: () => {
-        nowMsCalls += 1;
-        return nowMsCalls === 1 ? 1000 : 1030;
-      },
-      sleep: () => Promise.resolve(),
+      postgresQueryExecutorFactory: postgresFactory,
       logger,
     });
 
     const result = await handler({ sourceId: ' source-acme ' });
 
     expect(result.sourceId).toBe('source-acme');
-    expect(result.recordsSent).toBe(0);
     expect(result.processedAt).toBe('2026-03-04T11:00:00.000Z');
+    expect(result.recordsSent).toBe(2);
+    expect(result.records).toEqual([
+      {
+        customer_id: 10,
+        email: 'first@example.com',
+        updated_at: '2026-03-04T10:10:00.000Z',
+      },
+      {
+        customer_id: 11,
+        email: 'second@example.com',
+        updated_at: '2026-03-04T10:20:00.000Z',
+      },
+    ]);
+
     expect(repository.getByIdCalls).toEqual(['source-acme']);
     expect(secrets.getSecretValueCalls).toEqual([VALID_SOURCE.secretArn]);
+    expect(postgresFactory.createCalls).toHaveLength(1);
+    expect(postgresFactory.queryCalls).toEqual([
+      {
+        sql: 'select * from customers where updated_at > $1',
+        values: ['2026-03-01T00:00:00.000Z'],
+      },
+    ]);
     expect(logger.infoCalls).toEqual([
       [
         'collector.source_credentials.loaded',
@@ -118,37 +194,79 @@ describe('collector handler', () => {
           durationMs: 30,
         },
       ],
+      [
+        'collector.source_records.collected',
+        {
+          sourceId: 'source-acme',
+          engine: 'postgres',
+          cursor: '2026-03-01T00:00:00.000Z',
+          recordsCollected: 2,
+        },
+      ],
+    ]);
+  });
+
+  it('uses event cursor override when provided', async () => {
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          VALID_SOURCE.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+    });
+
+    await handler({
+      sourceId: VALID_SOURCE.sourceId,
+      cursor: '2026-03-04T09:00:00.000Z',
+    });
+
+    expect(postgresFactory.queryCalls).toEqual([
+      {
+        sql: 'select * from customers where updated_at > $1',
+        values: ['2026-03-04T09:00:00.000Z'],
+      },
     ]);
   });
 
   it('throws when sourceId is missing', async () => {
     const secrets = new SpySecretRepository(new Map());
-    const handler = createHandler({
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+    const handler = createCollectorHandler({
       sourceRegistryRepository: new SpySourceRegistryRepository(new Map()),
       secretRepository: secrets,
-      secretRetryPolicy: DEFAULT_SECRET_RETRY_POLICY,
-      now: () => '2026-03-04T11:00:00.000Z',
-      nowMs: () => 1000,
-      sleep: () => Promise.resolve(),
-      logger: new SpyLogger(),
+      postgresQueryExecutorFactory: postgresFactory,
     });
 
     await expect(handler({ sourceId: '' })).rejects.toThrow(
       'sourceId is required for collector execution.',
     );
     expect(secrets.getSecretValueCalls).toEqual([]);
+    expect(postgresFactory.queryCalls).toEqual([]);
   });
 
   it('throws controlled error when source does not exist in sources table', async () => {
     const secrets = new SpySecretRepository(new Map());
-    const handler = createHandler({
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+    const handler = createCollectorHandler({
       sourceRegistryRepository: new SpySourceRegistryRepository(new Map()),
       secretRepository: secrets,
-      secretRetryPolicy: DEFAULT_SECRET_RETRY_POLICY,
-      now: () => '2026-03-04T11:00:00.000Z',
-      nowMs: () => 1000,
-      sleep: () => Promise.resolve(),
-      logger: new SpyLogger(),
+      postgresQueryExecutorFactory: postgresFactory,
     });
 
     await expect(handler({ sourceId: 'source-missing' })).rejects.toBeInstanceOf(
@@ -158,6 +276,7 @@ describe('collector handler', () => {
       'Source "source-missing" was not found in sources registry.',
     );
     expect(secrets.getSecretValueCalls).toEqual([]);
+    expect(postgresFactory.queryCalls).toEqual([]);
   });
 
   it('throws controlled error when source is inactive', async () => {
@@ -174,14 +293,11 @@ describe('collector handler', () => {
       ]),
     );
     const secrets = new SpySecretRepository(new Map());
-    const handler = createHandler({
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+    const handler = createCollectorHandler({
       sourceRegistryRepository: repository,
       secretRepository: secrets,
-      secretRetryPolicy: DEFAULT_SECRET_RETRY_POLICY,
-      now: () => '2026-03-04T11:00:00.000Z',
-      nowMs: () => 1000,
-      sleep: () => Promise.resolve(),
-      logger: new SpyLogger(),
+      postgresQueryExecutorFactory: postgresFactory,
     });
 
     await expect(handler({ sourceId: 'source-inactive' })).rejects.toBeInstanceOf(
@@ -191,6 +307,7 @@ describe('collector handler', () => {
       'Source "source-inactive" is inactive and cannot be collected.',
     );
     expect(secrets.getSecretValueCalls).toEqual([]);
+    expect(postgresFactory.queryCalls).toEqual([]);
   });
 
   it('throws controlled error when source has invalid required fields', async () => {
@@ -207,14 +324,11 @@ describe('collector handler', () => {
       ]),
     );
     const secrets = new SpySecretRepository(new Map());
-    const handler = createHandler({
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+    const handler = createCollectorHandler({
       sourceRegistryRepository: repository,
       secretRepository: secrets,
-      secretRetryPolicy: DEFAULT_SECRET_RETRY_POLICY,
-      now: () => '2026-03-04T11:00:00.000Z',
-      nowMs: () => 1000,
-      sleep: () => Promise.resolve(),
-      logger: new SpyLogger(),
+      postgresQueryExecutorFactory: postgresFactory,
     });
 
     await expect(handler({ sourceId: 'source-invalid' })).rejects.toBeInstanceOf(
@@ -224,6 +338,7 @@ describe('collector handler', () => {
       'Source "source-invalid" has invalid configuration:',
     );
     expect(secrets.getSecretValueCalls).toEqual([]);
+    expect(postgresFactory.queryCalls).toEqual([]);
   });
 
   it('throws controlled error when secret does not exist in Secrets Manager', async () => {
@@ -231,15 +346,11 @@ describe('collector handler', () => {
       new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
     );
     const secrets = new SpySecretRepository(new Map([[VALID_SOURCE.secretArn, null]]));
-
-    const handler = createHandler({
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+    const handler = createCollectorHandler({
       sourceRegistryRepository: repository,
       secretRepository: secrets,
-      secretRetryPolicy: DEFAULT_SECRET_RETRY_POLICY,
-      now: () => '2026-03-04T11:00:00.000Z',
-      nowMs: () => 1000,
-      sleep: () => Promise.resolve(),
-      logger: new SpyLogger(),
+      postgresQueryExecutorFactory: postgresFactory,
     });
 
     await expect(handler({ sourceId: VALID_SOURCE.sourceId })).rejects.toBeInstanceOf(
@@ -249,5 +360,6 @@ describe('collector handler', () => {
       `Secret for source "${VALID_SOURCE.sourceId}" was not found in Secrets Manager.`,
     );
     expect(secrets.getSecretValueCalls).toEqual([VALID_SOURCE.secretArn, VALID_SOURCE.secretArn]);
+    expect(postgresFactory.queryCalls).toEqual([]);
   });
 });

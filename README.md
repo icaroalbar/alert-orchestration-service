@@ -123,6 +123,7 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Stage `prod`: `10`
   - Limites aceitos em runtime: inteiro entre `1` e `40`.
   - Fallback no scheduler quando ausente: `5`.
+  - Override sem alteração de código: ajuste `MAP_MAX_CONCURRENCY` no ambiente de execução (pipeline/deploy).
 - Coletora SQL (Postgres/MySQL) com pool controlado e cursor incremental:
   - `COLLECTOR_DEFAULT_CURSOR` (fallback inicial quando não existe cursor no evento nem na tabela `cursors`).
   - Precedência do cursor de execução: `event.cursor` > `cursors.last` > `COLLECTOR_DEFAULT_CURSOR`.

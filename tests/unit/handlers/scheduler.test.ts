@@ -344,6 +344,14 @@ describe('scheduler handler', () => {
       referenceNow: '2026-03-04T10:01:00.000Z',
       generatedAt: '2026-03-04T10:00:00.000Z',
       maxConcurrency: 5,
+      traceContext: {
+        traceId: expect.stringMatching(/^[0-9a-f]{32}$/),
+        spanId: expect.stringMatching(/^[0-9a-f]{16}$/),
+        traceFlags: expect.stringMatching(/^[0-9a-f]{2}$/),
+        traceparent: expect.stringMatching(
+          /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/,
+        ),
+      },
     });
     expect(logger.info).toHaveBeenCalledWith('scheduler.eligible_sources.filtered', {
       referenceNow: '2026-03-04T10:01:00.000Z',

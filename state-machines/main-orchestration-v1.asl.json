@@ -27,7 +27,8 @@
         "Fn::GetAtt": ["SchedulerLambdaFunction", "Arn"]
       },
       "Parameters": {
-        "now.$": "$.schedulerInput.now"
+        "now.$": "$.schedulerInput.now",
+        "meta.$": "$.meta"
       },
       "Retry": [
         {
@@ -65,7 +66,16 @@
       "Parameters": {
         "sourceId.$": "$$.Map.Item.Value.sourceId",
         "tenantId.$": "$$.Map.Item.Value.tenantId",
-        "meta.$": "$.meta"
+        "meta": {
+          "executionId.$": "$.meta.executionId",
+          "stateMachineId.$": "$.meta.stateMachineId",
+          "startedAt.$": "$.meta.startedAt",
+          "trigger.$": "$.meta.trigger",
+          "source.$": "$.meta.source",
+          "stage.$": "$.meta.stage",
+          "service.$": "$.meta.service",
+          "traceContext.$": "$.schedulerResult.traceContext"
+        }
       },
       "Iterator": {
         "StartAt": "InvokeCollector",

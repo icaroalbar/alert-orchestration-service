@@ -29,7 +29,7 @@ Payload esperado na execução:
 
 ### Scheduler (Task)
 
-- Entrada: `schedulerInput.now`.
+- Entrada: `schedulerInput.now` + `meta` (execution/stage/service).
 - Ação: invoca `SchedulerLambdaFunction`.
 - Implementação do scheduler:
   - Consulta fontes ativas no DynamoDB usando o índice `active-nextRunAt-index`.
@@ -46,18 +46,20 @@ Payload esperado na execução:
   - Política limitada: número de tentativas é finito (`MaxAttempts`) para evitar loop infinito.
 - Saída esperada em `schedulerResult`:
   - `contractVersion` (`scheduler-output.v1`)
+  - `sources` (`Array<{sourceId, tenantId}>`)
   - `sourceIds` (array de string)
   - `eligibleSources` (number)
   - `hasEligibleSources` (boolean)
   - `referenceNow` (string ISO)
   - `generatedAt` (string ISO)
   - `maxConcurrency` (number, inteiro entre 1 e 40)
+  - `traceContext` (traceparent/traceId/spanId/traceFlags)
   - Contrato detalhado em `docs/step-functions/scheduler-output-v1.md`.
 
 ### ProcessEligibleSources (Map)
 
-- Entrada: `schedulerResult.sourceIds` e `schedulerResult.maxConcurrency`.
-- Ação: itera cada `sourceId` e invoca `CollectorLambdaFunction`.
+- Entrada: `schedulerResult.sources` e `schedulerResult.maxConcurrency`.
+- Ação: itera cada item `{sourceId, tenantId}` e invoca `CollectorLambdaFunction`.
 - Retry com backoff exponencial na task `InvokeCollector` com os mesmos limites do `Scheduler`.
 - Política limitada também no coletor (`MaxAttempts` finito), com `Catch` por item para manter tolerância a falha parcial.
 - Catch por item no `InvokeCollector` (`States.ALL`) para registrar falha da fonte sem interromper o `Map`.
@@ -65,8 +67,11 @@ Payload esperado na execução:
   - `SourceProcessed` / `SourceFailed` (dimensão `Stage`);
   - `SourceProcessedBySource` / `SourceFailedBySource` (dimensões `Stage`, `ExecutionId`, `SourceId`).
 - Contrato por item em `collectorResults`:
-  - sucesso: `sourceId`, `status=SUCCEEDED`, `processedAt`, `recordsSent`;
-  - falha: `sourceId`, `status=FAILED`, `error`, `cause`.
+  - sucesso: `sourceId`, `tenantId`, `status=SUCCEEDED`, `processedAt`, `recordsSent`;
+  - falha: `sourceId`, `tenantId`, `status=FAILED`, `error`, `cause`.
+- Propagacao de trace:
+  - `schedulerResult.traceContext` e injetado em `meta.traceContext` de cada item do `Map`.
+  - `Collector` usa esse contexto como parent span para continuidade de rastreio distribuido.
 - Controle de paralelismo:
   - `MaxConcurrencyPath = $.schedulerResult.maxConcurrency`.
   - Valor configurado por stage via `custom.stages.<stage>.mapMaxConcurrency`:
@@ -80,7 +85,7 @@ Payload esperado na execução:
 - Entrada: `meta` + `schedulerResult`.
 - Saída final:
   - `meta`
-  - `sources` (`schedulerResult.sourceIds`)
+  - `sources` (`schedulerResult.sources`)
   - `results` (lista de itens com sucesso/falha por `sourceId`)
   - `scheduler.contractVersion`
   - `scheduler.referenceNow`

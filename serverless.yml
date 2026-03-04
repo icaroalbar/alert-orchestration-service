@@ -38,6 +38,7 @@ provider:
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS, '200'}
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE, '2'}
     COLLECTOR_IDEMPOTENCY_TTL_SECONDS: ${env:COLLECTOR_IDEMPOTENCY_TTL_SECONDS, '604800'}
+    CONSUMER_IDEMPOTENCY_TTL_SECONDS: ${env:CONSUMER_IDEMPOTENCY_TTL_SECONDS, '604800'}
     INTEGRATION_API_TIMEOUT_MS: ${env:INTEGRATION_API_TIMEOUT_MS, '5000'}
     METRICS_NAMESPACE: ${env:METRICS_NAMESPACE, 'AlertOrchestrationService/Runtime'}
     INTEGRATION_TARGETS: ${env:INTEGRATION_TARGETS, 'salesforce|hubspot'}
@@ -675,6 +676,15 @@ resources:
                     - logs:PutLogEvents
                   Resource:
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.salesforceConsumerFunctionName}:*
+                - Sid: WriteSalesforceConsumerIdempotencyClaims
+                  Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - IdempotencyTable
+                        - Arn
                 - Sid: PublishSalesforceRuntimeMetrics
                   Effect: Allow
                   Action:
@@ -719,6 +729,15 @@ resources:
                     - logs:PutLogEvents
                   Resource:
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.hubspotConsumerFunctionName}:*
+                - Sid: WriteHubspotConsumerIdempotencyClaims
+                  Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - IdempotencyTable
+                        - Arn
                 - Sid: PublishHubspotRuntimeMetrics
                   Effect: Allow
                   Action:

@@ -3,14 +3,23 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 describe('hubspot-consumer handler', () => {
   const originalEnv = process.env;
   const originalFetch = global.fetch;
+  const mockIdempotencyRepositoryFactory = () => ({
+    tryClaim: jest.fn(() => Promise.resolve(true)),
+    markCompleted: jest.fn(() => Promise.resolve()),
+  });
 
   afterEach(() => {
     process.env = { ...originalEnv };
     global.fetch = originalFetch;
+    jest.resetModules();
   });
 
   it('fails when target URL env var is missing', async () => {
     jest.resetModules();
+    const idempotencyRepository = mockIdempotencyRepositoryFactory();
+    jest.doMock('../../../src/infra/idempotency/dynamodb-collector-idempotency-repository', () => ({
+      createDynamoDbCollectorIdempotencyRepository: () => idempotencyRepository,
+    }));
     process.env = { ...originalEnv };
     delete process.env.HUBSPOT_INTEGRATION_TARGET_BASE_URL;
 
@@ -22,9 +31,14 @@ describe('hubspot-consumer handler', () => {
 
   it('initializes with integration-specific configuration', async () => {
     jest.resetModules();
+    const idempotencyRepository = mockIdempotencyRepositoryFactory();
+    jest.doMock('../../../src/infra/idempotency/dynamodb-collector-idempotency-repository', () => ({
+      createDynamoDbCollectorIdempotencyRepository: () => idempotencyRepository,
+    }));
     process.env = {
       ...originalEnv,
       HUBSPOT_INTEGRATION_TARGET_BASE_URL: 'https://hubspot.internal',
+      IDEMPOTENCY_TABLE_NAME: 'idempotency-table',
     };
     global.fetch = jest.fn(() =>
       Promise.resolve({
@@ -50,9 +64,14 @@ describe('hubspot-consumer handler', () => {
 
   it('retries transient 5xx external errors by returning batch item failure', async () => {
     jest.resetModules();
+    const idempotencyRepository = mockIdempotencyRepositoryFactory();
+    jest.doMock('../../../src/infra/idempotency/dynamodb-collector-idempotency-repository', () => ({
+      createDynamoDbCollectorIdempotencyRepository: () => idempotencyRepository,
+    }));
     process.env = {
       ...originalEnv,
       HUBSPOT_INTEGRATION_TARGET_BASE_URL: 'https://hubspot.internal',
+      IDEMPOTENCY_TABLE_NAME: 'idempotency-table',
     };
     global.fetch = jest.fn(() =>
       Promise.resolve({

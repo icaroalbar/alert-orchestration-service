@@ -1,4 +1,4 @@
-export type CollectorIdempotencyScope = 'upsert' | 'event';
+export type CollectorIdempotencyScope = 'upsert' | 'event' | 'consumer';
 export type CollectorIdempotencyStatus = 'PENDING' | 'COMPLETED';
 
 export interface CollectorIdempotencyClaim {

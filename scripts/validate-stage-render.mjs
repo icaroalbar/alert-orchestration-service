@@ -1,6 +1,8 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
+const DEFAULT_STAGE_RENDER_COMMAND = 'npm run sls:print:all';
+
 const run = (command) =>
   execSync(command, {
     encoding: 'utf8',
@@ -14,6 +16,13 @@ const printCapturedOutput = (error) => {
   if (stdout) process.stdout.write(stdout);
   if (stderr) process.stderr.write(stderr);
   return `${stdout}\n${stderr}`;
+};
+
+const emitUnclassifiedFailure = ({ stage, command }) => {
+  console.error(`UNCLASSIFIED_STAGE_VALIDATION_ERROR stage=${stage} command="${command}"`);
+  console.error(
+    'Próxima ação: habilite modo verbose (DEBUG=* ou SLS_DEBUG=*) e revise os logs do comando subjacente.',
+  );
 };
 
 const staticFallback = () => {
@@ -507,8 +516,10 @@ const staticFallback = () => {
   );
 };
 
+const stageRenderCommand = process.env.VALIDATE_STAGE_RENDER_COMMAND ?? DEFAULT_STAGE_RENDER_COMMAND;
+
 try {
-  const output = run('npm run sls:print:all');
+  const output = run(stageRenderCommand);
   if (output) process.stdout.write(output);
   process.exit(0);
 } catch (error) {
@@ -519,6 +530,10 @@ try {
     output.includes('EAI_AGAIN');
 
   if (!networkIssue) {
+    emitUnclassifiedFailure({
+      stage: 'stage-render',
+      command: stageRenderCommand,
+    });
     process.exit(1);
   }
 

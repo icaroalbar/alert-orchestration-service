@@ -8,6 +8,7 @@ import {
   CollectorSourceInactiveError,
   CollectorSourceNotFoundError,
 } from '../../../src/domain/collector/load-source-configuration';
+import { CollectorFieldMapValidationError } from '../../../src/domain/collector/map-records-with-field-map';
 import {
   CollectorSecretNotFoundError,
   type CollectorSecretRetryPolicy,
@@ -255,14 +256,12 @@ describe('collector handler', () => {
     expect(result.recordsSent).toBe(2);
     expect(result.records).toEqual([
       {
-        customer_id: 10,
+        id: 10,
         email: 'first@example.com',
-        updated_at: '2026-03-04T10:10:00.000Z',
       },
       {
-        customer_id: 11,
+        id: 11,
         email: 'second@example.com',
-        updated_at: '2026-03-04T10:20:00.000Z',
       },
     ]);
 
@@ -362,9 +361,8 @@ describe('collector handler', () => {
     expect(result.recordsSent).toBe(1);
     expect(result.records).toEqual([
       {
-        customer_id: 99,
+        id: 99,
         email: 'mysql@example.com',
-        updated_at: '2026-03-04T10:25:00.000Z',
       },
     ]);
     expect(postgresFactory.createCalls).toEqual([]);
@@ -478,6 +476,60 @@ describe('collector handler', () => {
       },
     ]);
     expect(cursorRepository.saveCalls).toEqual([]);
+  });
+
+  it('fails with traceable error when required field mapping is missing', async () => {
+    const sourceWithRequiredIdMap: SourceRegistryRecord = {
+      ...VALID_SOURCE,
+      sourceId: 'source-required-id',
+      fieldMap: {
+        id: 'customer_id',
+        email: 'email',
+      },
+    };
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([[sourceWithRequiredIdMap.sourceId, sourceWithRequiredIdMap]]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          sourceWithRequiredIdMap.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        email: 'no-id@example.com',
+        updated_at: new Date('2026-03-04T10:10:00.000Z'),
+      },
+    ]);
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+    });
+
+    await expect(handler({ sourceId: sourceWithRequiredIdMap.sourceId })).rejects.toBeInstanceOf(
+      CollectorFieldMapValidationError,
+    );
+
+    await expect(handler({ sourceId: sourceWithRequiredIdMap.sourceId })).rejects.toMatchObject({
+      details: {
+        sourceId: sourceWithRequiredIdMap.sourceId,
+        recordIndex: 0,
+        canonicalField: 'id',
+        sourceColumn: 'customer_id',
+        reason: 'required_field_missing',
+      },
+    });
   });
 
   it('throws when sourceId is missing', async () => {

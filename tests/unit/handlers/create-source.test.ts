@@ -87,7 +87,7 @@ describe('create-source handler', () => {
     });
   });
 
-  it('returns 422 when payload validation fails', async () => {
+  it('returns 400 when payload validation fails', async () => {
     const repository = new SpySourceRegistryRepository();
     const handler = createHandler({
       sourceRegistryRepository: repository,
@@ -101,7 +101,7 @@ describe('create-source handler', () => {
       }),
     });
 
-    expect(result.statusCode).toBe(422);
+    expect(result.statusCode).toBe(400);
     const parsedBody = JSON.parse(result.body) as {
       message: string;
       errors: Array<{ field: string }>;

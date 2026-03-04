@@ -31,7 +31,7 @@ Atualizar parcialmente uma fonte já cadastrada no plugin registry, preservando 
 - `createdAt`
 - `updatedAt`
 
-Se o payload incluir campos imutáveis ou desconhecidos, a API retorna `422`.
+Se o payload incluir campos imutáveis ou desconhecidos, a API retorna `400`.
 
 ## Controle de versão
 
@@ -53,6 +53,6 @@ A atualização usa optimistic locking em `updatedAt`:
   - `code: SOURCE_NOT_FOUND`
 - `409 Conflict`
   - `code: SOURCE_VERSION_CONFLICT`
-- `422 Unprocessable Entity`
-  - `message: Source patch validation failed.`
+- `400 Bad Request`
+  - `message: Source payload validation failed.`
   - `errors[]`

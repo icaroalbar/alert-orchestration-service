@@ -143,7 +143,7 @@ describe('update-source handler', () => {
     });
   });
 
-  it('returns 422 when payload contains immutable fields', async () => {
+  it('returns 400 when payload contains immutable fields', async () => {
     const handler = createHandler({
       sourceRegistryRepository: new SpySourceRegistryRepository([EXISTING_SOURCE]),
       now: () => '2026-03-03T12:00:00.000Z',
@@ -157,12 +157,12 @@ describe('update-source handler', () => {
       }),
     });
 
-    expect(result.statusCode).toBe(422);
+    expect(result.statusCode).toBe(400);
     const parsed = JSON.parse(result.body) as {
       message: string;
       errors: Array<{ field: string }>;
     };
-    expect(parsed.message).toBe('Source patch validation failed.');
+    expect(parsed.message).toBe('Source payload validation failed.');
     expect(parsed.errors.some((entry) => entry.field === 'sourceId')).toBe(true);
   });
 
@@ -184,7 +184,7 @@ describe('update-source handler', () => {
     });
   });
 
-  it('returns 422 when merged state violates source schema', async () => {
+  it('returns 400 when merged state violates source schema', async () => {
     const handler = createHandler({
       sourceRegistryRepository: new SpySourceRegistryRepository([EXISTING_SOURCE]),
       now: () => '2026-03-03T12:00:00.000Z',
@@ -197,12 +197,12 @@ describe('update-source handler', () => {
       }),
     });
 
-    expect(result.statusCode).toBe(422);
+    expect(result.statusCode).toBe(400);
     const parsed = JSON.parse(result.body) as {
       message: string;
       errors: Array<{ field: string }>;
     };
-    expect(parsed.message).toBe('Source patch validation failed.');
+    expect(parsed.message).toBe('Source payload validation failed.');
     expect(parsed.errors.some((entry) => entry.field === 'cronExpr')).toBe(true);
   });
 

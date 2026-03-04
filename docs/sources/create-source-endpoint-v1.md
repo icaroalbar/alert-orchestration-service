@@ -26,11 +26,7 @@ Endpoint para cadastro de novas fontes no plugin registry.
 
 ### `400 Bad Request`
 
-Body ausente ou JSON inválido.
-
-### `422 Unprocessable Entity`
-
-Payload inválido conforme regras de `SourceSchemaV1`.
+Body ausente, JSON inválido ou payload inválido conforme regras de `SourceSchemaV1` (campos obrigatórios, formatos e condicionais).
 
 ### `409 Conflict`
 

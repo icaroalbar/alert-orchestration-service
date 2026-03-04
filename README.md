@@ -130,7 +130,10 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - DLQ dedicada por integração e por stage:
   - Salesforce DLQ: `${service}-${stage}-salesforce-events-dlq`
   - HubSpot DLQ: `${service}-${stage}-hubspot-events-dlq`
-- Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por integração.
+- Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por stage/integracao:
+  - Stage `dev`: `3`
+  - Stage `stg`: `5`
+  - Stage `prod`: `8`
 - Alarmes de DLQ por integração com métrica `AWS/SQS::ApproximateNumberOfMessagesVisible` e limiar por stage (`salesforceDlqAlarmThreshold` e `hubspotDlqAlarmThreshold`).
 - Ações de notificação dos alarmes direcionadas para tópico SNS operacional `${service}-${stage}-dlq-alarms`.
 - Logger estruturado aplica redaction recursiva de PII e segredos antes da serialização dos eventos.
@@ -170,6 +173,23 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Limites aceitos em runtime: inteiro entre `1` e `40`.
   - Fallback no scheduler quando ausente: `5`.
   - Override sem alteração de código: ajuste `MAP_MAX_CONCURRENCY` no ambiente de execução (pipeline/deploy).
+- Perfil de runtime de Lambdas por stage (versionado em `custom.stages.*`):
+  - `schedulerMemorySize` / `schedulerTimeoutSeconds`
+    - `dev`: `256 MB` / `45s`
+    - `stg`: `256 MB` / `45s`
+    - `prod`: `384 MB` / `60s`
+  - `collectorMemorySize` / `collectorTimeoutSeconds`
+    - `dev`: `512 MB` / `90s`
+    - `stg`: `768 MB` / `90s`
+    - `prod`: `1024 MB` / `120s`
+  - `consumerMemorySize` / `consumerTimeoutSeconds`
+    - `dev`: `256 MB` / `45s`
+    - `stg`: `384 MB` / `45s`
+    - `prod`: `512 MB` / `60s`
+  - `sourceRegistryApiMemorySize` / `sourceRegistryApiTimeoutSeconds`
+    - `dev`: `256 MB` / `20s`
+    - `stg`: `256 MB` / `20s`
+    - `prod`: `384 MB` / `25s`
 - Coletora SQL (Postgres/MySQL) com pool controlado e cursor incremental:
   - `COLLECTOR_DEFAULT_CURSOR` (fallback inicial quando não existe cursor no evento nem na tabela `cursors`).
   - Precedência do cursor de execução: `event.cursor` > `cursors.last` > `COLLECTOR_DEFAULT_CURSOR`.

@@ -89,6 +89,12 @@ Todos os alarmes notificam o topico SNS por stage:
 - Confirmar se a duracao esta proxima de timeout da funcao.
 - Verificar gargalo de IO (API externa, banco, Secrets Manager).
 - Avaliar necessidade de ajustar timeout/memory em issue dedicada.
+- Parametros versionados em IaC para ajuste por stage:
+  - `schedulerMemorySize`, `schedulerTimeoutSeconds`
+  - `collectorMemorySize`, `collectorTimeoutSeconds`
+  - `consumerMemorySize`, `consumerTimeoutSeconds`
+  - `sourceRegistryApiMemorySize`, `sourceRegistryApiTimeoutSeconds`
+  - `salesforceQueueMaxReceiveCount`, `hubspotQueueMaxReceiveCount`
 
 ### Falha/timeout da state machine
 

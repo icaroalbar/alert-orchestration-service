@@ -1,4 +1,8 @@
 import {
+  collectMySqlRecords,
+  type MySqlQueryExecutor,
+} from '../domain/collector/collect-mysql-records';
+import {
   collectPostgresRecords,
   type CollectorCursorValue,
   type CollectorStandardizedRecord,
@@ -14,6 +18,7 @@ import {
   loadCollectorSourceConfiguration,
   type CollectorSourceConfigurationRepository,
 } from '../domain/collector/load-source-configuration';
+import { createMySqlQueryExecutorFactory } from '../infra/collector/mysql-query-executor';
 import { createPostgresQueryExecutorFactory } from '../infra/collector/postgres-query-executor';
 import { createSecretsManagerSecretRepository } from '../infra/secrets/secrets-manager-secret-repository';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
@@ -37,9 +42,22 @@ const COLLECTOR_POSTGRES_POOL_IDLE_TIMEOUT_MS_MAX = 120_000;
 const COLLECTOR_POSTGRES_POOL_CONNECTION_TIMEOUT_MS_DEFAULT = 5_000;
 const COLLECTOR_POSTGRES_POOL_CONNECTION_TIMEOUT_MS_MIN = 100;
 const COLLECTOR_POSTGRES_POOL_CONNECTION_TIMEOUT_MS_MAX = 60_000;
+const COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS_DEFAULT = 5;
+const COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS_MIN = 1;
+const COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS_MAX = 20;
+const COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS_DEFAULT = 10_000;
+const COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS_MIN = 100;
+const COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS_MAX = 120_000;
+const COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS_DEFAULT = 5_000;
+const COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS_MIN = 100;
+const COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS_MAX = 60_000;
+const COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_DEFAULT = 5_000;
+const COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_MIN = 100;
+const COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_MAX = 120_000;
 const COLLECTOR_DEFAULT_CURSOR_FALLBACK = '1970-01-01T00:00:00.000Z';
 
 type PostgresQueryExecutorFactory = (credentials: CollectorSourceCredentials) => PostgresQueryExecutor;
+type MySqlQueryExecutorFactory = (credentials: CollectorSourceCredentials) => MySqlQueryExecutor;
 
 export interface CollectorEvent {
   sourceId: string;
@@ -61,6 +79,7 @@ export interface CollectorDependencies {
   sourceRegistryRepository: CollectorSourceConfigurationRepository;
   secretRepository: CollectorSecretRepository;
   postgresQueryExecutorFactory: PostgresQueryExecutorFactory;
+  mySqlQueryExecutorFactory: MySqlQueryExecutorFactory;
   secretRetryPolicy: CollectorSecretRetryPolicy;
   defaultCursorValue: string;
   now: () => string;
@@ -171,6 +190,42 @@ const resolvePostgresPoolConnectionTimeoutMs = (rawValue: string | undefined): n
     fallback: COLLECTOR_POSTGRES_POOL_CONNECTION_TIMEOUT_MS_DEFAULT,
   });
 
+const resolveMySqlPoolMaxConnections = (rawValue: string | undefined): number =>
+  resolveBoundedIntegerFromEnv({
+    rawValue,
+    envName: 'COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS',
+    min: COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS_MIN,
+    max: COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS_MAX,
+    fallback: COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS_DEFAULT,
+  });
+
+const resolveMySqlPoolIdleTimeoutMs = (rawValue: string | undefined): number =>
+  resolveBoundedIntegerFromEnv({
+    rawValue,
+    envName: 'COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS',
+    min: COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS_MIN,
+    max: COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS_MAX,
+    fallback: COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS_DEFAULT,
+  });
+
+const resolveMySqlPoolConnectionTimeoutMs = (rawValue: string | undefined): number =>
+  resolveBoundedIntegerFromEnv({
+    rawValue,
+    envName: 'COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS',
+    min: COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS_MIN,
+    max: COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS_MAX,
+    fallback: COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS_DEFAULT,
+  });
+
+const resolveMySqlQueryTimeoutMs = (rawValue: string | undefined): number =>
+  resolveBoundedIntegerFromEnv({
+    rawValue,
+    envName: 'COLLECTOR_MYSQL_QUERY_TIMEOUT_MS',
+    min: COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_MIN,
+    max: COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_MAX,
+    fallback: COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_DEFAULT,
+  });
+
 const resolveDefaultCursorValue = (rawValue: string | undefined): string => {
   if (!rawValue) {
     return COLLECTOR_DEFAULT_CURSOR_FALLBACK;
@@ -230,6 +285,16 @@ const getDefaultDependencies = (): CollectorDependencies => {
         ),
       },
     }),
+    mySqlQueryExecutorFactory: createMySqlQueryExecutorFactory({
+      poolSettings: {
+        maxConnections: resolveMySqlPoolMaxConnections(process.env.COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS),
+        idleTimeoutMs: resolveMySqlPoolIdleTimeoutMs(process.env.COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS),
+        connectionTimeoutMs: resolveMySqlPoolConnectionTimeoutMs(
+          process.env.COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS,
+        ),
+        queryTimeoutMs: resolveMySqlQueryTimeoutMs(process.env.COLLECTOR_MYSQL_QUERY_TIMEOUT_MS),
+      },
+    }),
     secretRetryPolicy: {
       maxAttempts: resolveRetryMaxAttempts(process.env.COLLECTOR_SECRET_RETRY_MAX_ATTEMPTS),
       baseDelayMs: resolveRetryBaseDelayMs(process.env.COLLECTOR_SECRET_RETRY_BASE_DELAY_MS),
@@ -250,6 +315,7 @@ export const createHandler =
     sourceRegistryRepository,
     secretRepository,
     postgresQueryExecutorFactory,
+    mySqlQueryExecutorFactory,
     secretRetryPolicy,
     defaultCursorValue,
     now,
@@ -297,8 +363,18 @@ export const createHandler =
           postgresQueryExecutor: postgresQueryExecutorFactory(loadedCredentials.credentials),
         });
         break;
+      case 'mysql':
+        records = await collectMySqlRecords({
+          sourceId,
+          queryTemplate: sourceConfiguration.query,
+          cursor,
+          mySqlQueryExecutor: mySqlQueryExecutorFactory(loadedCredentials.credentials),
+        });
+        break;
       default:
-        throw new Error(`Collector engine "${sourceConfiguration.engine}" is not supported yet.`);
+        throw new Error(
+          `Collector engine "${String(sourceConfiguration.engine)}" is not supported yet.`,
+        );
     }
 
     logger.info('collector.source_records.collected', {

@@ -99,11 +99,15 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Stage `prod`: `10`
   - Limites aceitos em runtime: inteiro entre `1` e `40`.
   - Fallback no scheduler quando ausente: `5`.
-- Coletora Postgres com pool controlado e cursor incremental:
+- Coletora SQL (Postgres/MySQL) com pool controlado e cursor incremental:
   - `COLLECTOR_DEFAULT_CURSOR` (fallback inicial quando o evento não envia cursor).
   - `COLLECTOR_POSTGRES_POOL_MAX_CONNECTIONS` (default `5`).
   - `COLLECTOR_POSTGRES_POOL_IDLE_TIMEOUT_MS` (default `10000`).
   - `COLLECTOR_POSTGRES_POOL_CONNECTION_TIMEOUT_MS` (default `5000`).
+  - `COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS` (default `5`).
+  - `COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS` (default `10000`).
+  - `COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS` (default `5000`).
+  - `COLLECTOR_MYSQL_QUERY_TIMEOUT_MS` (default `5000`).
 - API de fontes protegida por JWT Authorizer no HTTP API:
   - Header obrigatório: `Authorization: Bearer <jwt>`.
   - Configuração por stage:

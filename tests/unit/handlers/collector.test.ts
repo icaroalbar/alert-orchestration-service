@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
+import type { MySqlQueryExecutor } from '../../../src/domain/collector/collect-mysql-records';
 import type { PostgresQueryExecutor } from '../../../src/domain/collector/collect-postgres-records';
 import {
   CollectorSourceConfigInvalidError,
@@ -31,6 +32,13 @@ const VALID_SOURCE: SourceRegistryRecord = {
   schemaVersion: '1.0.0',
   createdAt: '2026-03-04T10:00:00.000Z',
   updatedAt: '2026-03-04T10:00:00.000Z',
+};
+
+const VALID_MYSQL_SOURCE: SourceRegistryRecord = {
+  ...VALID_SOURCE,
+  sourceId: 'source-mysql',
+  engine: 'mysql',
+  secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:acme/source-mysql',
 };
 
 class SpySourceRegistryRepository {
@@ -73,6 +81,24 @@ class SpyPostgresQueryExecutorFactory {
   };
 }
 
+class SpyMySqlQueryExecutorFactory {
+  public readonly createCalls: CollectorSourceCredentials[] = [];
+  public readonly queryCalls: Array<{ sql: string; values: readonly unknown[] }> = [];
+
+  constructor(private readonly rowsToReturn: readonly Record<string, unknown>[]) {}
+
+  create = (credentials: CollectorSourceCredentials): MySqlQueryExecutor => {
+    this.createCalls.push(credentials);
+
+    return {
+      query: (sql: string, values: readonly unknown[]) => {
+        this.queryCalls.push({ sql, values });
+        return Promise.resolve(this.rowsToReturn);
+      },
+    };
+  };
+}
+
 class SpyLogger {
   public readonly infoCalls: unknown[][] = [];
 
@@ -91,11 +117,13 @@ const createCollectorHandler = ({
   sourceRegistryRepository,
   secretRepository,
   postgresQueryExecutorFactory,
+  mySqlQueryExecutorFactory = new SpyMySqlQueryExecutorFactory([]),
   logger,
 }: {
   sourceRegistryRepository: SpySourceRegistryRepository;
   secretRepository: SpySecretRepository;
   postgresQueryExecutorFactory: SpyPostgresQueryExecutorFactory;
+  mySqlQueryExecutorFactory?: SpyMySqlQueryExecutorFactory;
   logger?: SpyLogger;
 }) => {
   let nowMsCalls = 0;
@@ -103,6 +131,7 @@ const createCollectorHandler = ({
     sourceRegistryRepository,
     secretRepository,
     postgresQueryExecutorFactory: postgresQueryExecutorFactory.create,
+    mySqlQueryExecutorFactory: mySqlQueryExecutorFactory.create,
     secretRetryPolicy: DEFAULT_SECRET_RETRY_POLICY,
     defaultCursorValue: '2026-03-01T00:00:00.000Z',
     now: () => '2026-03-04T11:00:00.000Z',
@@ -203,6 +232,60 @@ describe('collector handler', () => {
           recordsCollected: 2,
         },
       ],
+    ]);
+  });
+
+  it('loads source config, runs mysql incremental query and returns standardized result', async () => {
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([[VALID_MYSQL_SOURCE.sourceId, VALID_MYSQL_SOURCE]]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          VALID_MYSQL_SOURCE.secretArn,
+          JSON.stringify({
+            host: 'mysql.internal',
+            port: 3306,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+    const mySqlFactory = new SpyMySqlQueryExecutorFactory([
+      {
+        customer_id: 99,
+        email: 'mysql@example.com',
+        updated_at: new Date('2026-03-04T10:25:00.000Z'),
+      },
+    ]);
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+      mySqlQueryExecutorFactory: mySqlFactory,
+    });
+
+    const result = await handler({ sourceId: VALID_MYSQL_SOURCE.sourceId, cursor: 42 });
+
+    expect(result.recordsSent).toBe(1);
+    expect(result.records).toEqual([
+      {
+        customer_id: 99,
+        email: 'mysql@example.com',
+        updated_at: '2026-03-04T10:25:00.000Z',
+      },
+    ]);
+    expect(postgresFactory.createCalls).toEqual([]);
+    expect(mySqlFactory.createCalls).toHaveLength(1);
+    expect(mySqlFactory.queryCalls).toEqual([
+      {
+        sql: 'select * from customers where updated_at > ?',
+        values: [42],
+      },
     ]);
   });
 

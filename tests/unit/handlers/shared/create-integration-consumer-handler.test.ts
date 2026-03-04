@@ -1,9 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
 
-import type {
-  CollectorIdempotencyClaim,
-  CollectorIdempotencyCompletion,
-} from '../../../../src/domain/collector/collector-idempotency-repository';
 import {
   createIntegrationConsumerHandler,
   type IntegrationConsumerPayload,
@@ -36,48 +32,15 @@ class SpyRecordProcessor {
   };
 }
 
-class SpyIntegrationConsumerIdempotencyRepository {
-  public readonly tryClaimCalls: CollectorIdempotencyClaim[] = [];
-  public readonly markCompletedCalls: CollectorIdempotencyCompletion[] = [];
-  private readonly statusByKey = new Map<string, 'PENDING' | 'COMPLETED'>();
-
-  constructor(preCompletedKeys: string[] = []) {
-    for (const key of preCompletedKeys) {
-      this.statusByKey.set(key, 'COMPLETED');
-    }
-  }
-
-  tryClaim = (claim: CollectorIdempotencyClaim): Promise<boolean> => {
-    this.tryClaimCalls.push(claim);
-    const currentStatus = this.statusByKey.get(claim.deduplicationKey);
-    if (currentStatus === 'COMPLETED') {
-      return Promise.resolve(false);
-    }
-
-    this.statusByKey.set(claim.deduplicationKey, claim.status ?? 'COMPLETED');
-    return Promise.resolve(true);
-  };
-
-  markCompleted = (params: CollectorIdempotencyCompletion): Promise<void> => {
-    this.markCompletedCalls.push(params);
-    this.statusByKey.set(params.deduplicationKey, 'COMPLETED');
-    return Promise.resolve();
-  };
-}
-
 describe('createIntegrationConsumerHandler', () => {
   it('creates reusable consumer handler and returns no batch item failures', async () => {
     const logger = new SpyLogger();
     const recordProcessor = new SpyRecordProcessor();
-    const idempotencyRepository = new SpyIntegrationConsumerIdempotencyRepository();
     const handler = createIntegrationConsumerHandler({
       integrationName: 'salesforce',
       targetBaseUrl: 'https://salesforce.internal',
-      idempotencyRepository,
       processRecord: recordProcessor.invoke,
       logger,
-      now: () => '2026-03-04T11:00:00.000Z',
-      nowMs: () => 1000,
     });
 
     const result = await handler({
@@ -127,26 +90,6 @@ describe('createIntegrationConsumerHandler', () => {
         },
         integrationName: 'salesforce',
         targetBaseUrl: 'https://salesforce.internal',
-      },
-    ]);
-    expect(idempotencyRepository.tryClaimCalls).toEqual([
-      {
-        deduplicationKey: 'consumer:salesforce:exec-1:1',
-        scope: 'consumer',
-        status: 'PENDING',
-        sourceId: 'source-1',
-        recordId: '1',
-        cursor: '2026-03-04T10:00:00.000Z',
-        correlationId: 'exec-1',
-        createdAt: '2026-03-04T11:00:00.000Z',
-        expiresAtEpochSeconds: 604801,
-      },
-    ]);
-    expect(idempotencyRepository.markCompletedCalls).toEqual([
-      {
-        deduplicationKey: 'consumer:salesforce:exec-1:1',
-        completedAt: '2026-03-04T11:00:00.000Z',
-        expiresAtEpochSeconds: 604801,
       },
     ]);
   });
@@ -232,16 +175,12 @@ describe('createIntegrationConsumerHandler', () => {
     });
   });
 
-  it('deduplicates redelivered message already completed for the same customer event', async () => {
+  it('deduplicates by correlationId only, independent of tenantId/sourceId', async () => {
     const logger = new SpyLogger();
     const recordProcessor = new SpyRecordProcessor();
-    const idempotencyRepository = new SpyIntegrationConsumerIdempotencyRepository([
-      'consumer:hubspot:exec-1:1',
-    ]);
     const handler = createIntegrationConsumerHandler({
       integrationName: 'hubspot',
       targetBaseUrl: 'https://hubspot.internal',
-      idempotencyRepository,
       processRecord: recordProcessor.invoke,
       logger,
     });
@@ -249,8 +188,12 @@ describe('createIntegrationConsumerHandler', () => {
     const result = await handler({
       Records: [
         {
-          messageId: 'msg-redelivery',
-          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+          messageId: 'msg-first',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-shared","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+        },
+        {
+          messageId: 'msg-duplicate-correlation',
+          body: '{"eventType":"customer.persisted","sourceId":"source-2","tenantId":"tenant-other","correlationId":"exec-shared","publishedAt":"2026-03-04T10:01:00.000Z","customer":{"id":2}}',
         },
       ],
     });
@@ -258,7 +201,7 @@ describe('createIntegrationConsumerHandler', () => {
     expect(result).toEqual({
       batchItemFailures: [],
     });
-    expect(recordProcessor.calls).toEqual([]);
+    expect(recordProcessor.calls).toHaveLength(1);
     expect(
       logger.infoCalls.some(([eventName]) => eventName === 'integration.consumer.deduplicated'),
     ).toBe(true);
@@ -267,8 +210,8 @@ describe('createIntegrationConsumerHandler', () => {
         'integration.consumer.batch_summary',
         {
           integrationName: 'hubspot',
-          recordsCount: 1,
-          processedCount: 0,
+          recordsCount: 2,
+          processedCount: 1,
           retriedCount: 0,
           deduplicatedCount: 1,
           discardedCount: 0,
@@ -277,15 +220,40 @@ describe('createIntegrationConsumerHandler', () => {
     ]));
   });
 
-  it('keeps failed delivery pending and retries successfully on next attempt', async () => {
+  it('processes duplicated tenantId when correlationId is different', async () => {
+    const recordProcessor = new SpyRecordProcessor();
+    const handler = createIntegrationConsumerHandler({
+      integrationName: 'salesforce',
+      targetBaseUrl: 'https://salesforce.internal',
+      processRecord: recordProcessor.invoke,
+    });
+
+    const result = await handler({
+      Records: [
+        {
+          messageId: 'msg-1',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+        },
+        {
+          messageId: 'msg-2',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-2","publishedAt":"2026-03-04T10:00:30.000Z","customer":{"id":2}}',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      batchItemFailures: [],
+    });
+    expect(recordProcessor.calls).toHaveLength(2);
+  });
+
+  it('keeps failed delivery retryable and succeeds on the next attempt', async () => {
     class TransientError extends Error {}
 
-    const idempotencyRepository = new SpyIntegrationConsumerIdempotencyRepository();
     let shouldFail = true;
     const handler = createIntegrationConsumerHandler({
       integrationName: 'salesforce',
       targetBaseUrl: 'https://salesforce.internal',
-      idempotencyRepository,
       processRecord: () => {
         if (shouldFail) {
           shouldFail = false;
@@ -317,15 +285,6 @@ describe('createIntegrationConsumerHandler', () => {
     });
     expect(secondAttempt).toEqual({
       batchItemFailures: [],
-    });
-    expect(
-      idempotencyRepository.tryClaimCalls
-        .filter((claim) => claim.scope === 'consumer')
-        .map((claim) => claim.status),
-    ).toEqual(['PENDING', 'PENDING']);
-    expect(idempotencyRepository.markCompletedCalls).toHaveLength(1);
-    expect(idempotencyRepository.markCompletedCalls[0]).toMatchObject({
-      deduplicationKey: 'consumer:salesforce:exec-1:1',
     });
   });
 });

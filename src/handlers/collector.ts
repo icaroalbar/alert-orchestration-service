@@ -42,6 +42,11 @@ import { createMySqlQueryExecutorFactory } from '../infra/collector/mysql-query-
 import { createPostgresQueryExecutorFactory } from '../infra/collector/postgres-query-executor';
 import { createDynamoDbCollectorCursorRepository } from '../infra/cursors/dynamodb-collector-cursor-repository';
 import { createDynamoDbCollectorIdempotencyRepository } from '../infra/idempotency/dynamodb-collector-idempotency-repository';
+import {
+  createCloudWatchMetricsPublisher,
+  createNoopMetricsPublisher,
+  type RuntimeMetricsPublisher,
+} from '../infra/observability/cloudwatch-metrics-publisher';
 import { createSecretsManagerSecretRepository } from '../infra/secrets/secrets-manager-secret-repository';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
 import { createSnsCustomerEventsPublisher, type CustomerEventsPublisher } from '../infra/events/sns-customer-events-publisher';
@@ -98,6 +103,10 @@ const COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MIN = 60;
 const COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MAX = 2_592_000;
 const INTEGRATION_TARGETS_ENV = 'INTEGRATION_TARGETS';
 const INTEGRATION_TARGETS_DEFAULT = 'salesforce|hubspot';
+const METRICS_NAMESPACE_ENV = 'METRICS_NAMESPACE';
+const METRICS_NAMESPACE_DEFAULT = 'AlertOrchestrationService/Runtime';
+const STAGE_ENV = 'STAGE';
+const SERVICE_NAME_ENV = 'SERVICE_NAME';
 
 type PostgresQueryExecutorFactory = (credentials: CollectorSourceCredentials) => PostgresQueryExecutor;
 type MySqlQueryExecutorFactory = (credentials: CollectorSourceCredentials) => MySqlQueryExecutor;
@@ -140,6 +149,7 @@ export interface CollectorDependencies {
   customerEventsPublisher: CustomerEventsPublisher;
   idempotencyRepository: CollectorIdempotencyRepository;
   idempotencyTtlSeconds: number;
+  metricsPublisher?: RuntimeMetricsPublisher;
   logger: Pick<typeof console, 'info'>;
 }
 
@@ -675,6 +685,11 @@ const getDefaultDependencies = (): CollectorDependencies => {
     idempotencyTtlSeconds: resolveCollectorIdempotencyTtlSeconds(
       process.env.COLLECTOR_IDEMPOTENCY_TTL_SECONDS,
     ),
+    metricsPublisher: createCloudWatchMetricsPublisher({
+      namespace: process.env[METRICS_NAMESPACE_ENV] ?? METRICS_NAMESPACE_DEFAULT,
+      stage: process.env[STAGE_ENV] ?? 'unknown',
+      serviceName: process.env[SERVICE_NAME_ENV] ?? 'alert-orchestration-service',
+    }),
     logger: createStructuredLogger({
       component: 'collector',
     }),
@@ -699,289 +714,343 @@ export const createHandler =
     customerEventsPublisher,
     idempotencyRepository,
     idempotencyTtlSeconds,
+    metricsPublisher = createNoopMetricsPublisher(),
     logger,
   }: CollectorDependencies) =>
   async (event: CollectorEvent): Promise<CollectorResult> => {
+    const executionStartedAtMs = nowMs();
     const sourceId = event?.sourceId?.trim() ?? '';
     if (sourceId.length === 0) {
       throw new Error('sourceId is required for collector execution.');
     }
+    let executionStatus: 'SUCCEEDED' | 'FAILED' = 'FAILED';
 
-    const sourceConfiguration = await loadCollectorSourceConfiguration({
-      sourceId,
-      sourceRegistryRepository,
-    });
-
-    const cursorSnapshot = await cursorRepository.getBySource(sourceId);
-    logger.info('collector.cursor.loaded', {
-      sourceId,
-      hasPersistedCursor: cursorSnapshot !== null,
-      persistedCursor: cursorSnapshot?.last ?? null,
-    });
-
-    const loadedCredentials = await loadCollectorSourceCredentials({
-      sourceId,
-      engine: sourceConfiguration.engine,
-      secretArn: sourceConfiguration.secretArn,
-      secretRepository,
-      retryPolicy: secretRetryPolicy,
-      nowMs,
-      sleep,
-    });
-
-    logger.info('collector.source_credentials.loaded', {
-      sourceId,
-      engine: sourceConfiguration.engine,
-      attempts: loadedCredentials.metrics.attempts,
-      durationMs: loadedCredentials.metrics.durationMs,
-    });
-
-    const cursor = resolveCursorValue(event?.cursor, cursorSnapshot?.last, defaultCursorValue);
-
-    let records: CollectorStandardizedRecord[];
-    switch (sourceConfiguration.engine) {
-      case 'postgres':
-        records = await collectPostgresRecords({
-          sourceId,
-          queryTemplate: sourceConfiguration.query,
-          cursor,
-          postgresQueryExecutor: postgresQueryExecutorFactory(loadedCredentials.credentials),
-        });
-        break;
-      case 'mysql':
-        records = await collectMySqlRecords({
-          sourceId,
-          queryTemplate: sourceConfiguration.query,
-          cursor,
-          mySqlQueryExecutor: mySqlQueryExecutorFactory(loadedCredentials.credentials),
-        });
-        break;
-      default:
-        throw new Error(
-          `Collector engine "${String(sourceConfiguration.engine)}" is not supported yet.`,
-        );
-    }
-
-    logger.info('collector.source_records.collected', {
-      sourceId,
-      engine: sourceConfiguration.engine,
-      cursor,
-      recordsCollected: records.length,
-    });
-
-    const requiredCanonicalFields = sourceConfiguration.fieldMap.id ? ['id'] : [];
-    const mappingResult = mapRecordsWithFieldMap({
-      sourceId,
-      records,
-      fieldMap: sourceConfiguration.fieldMap,
-      requiredCanonicalFields,
-    });
-
-    const ignoredSourceColumns = mappingResult.ignoredSourceColumns.filter(
-      (sourceColumn) => sourceColumn !== sourceConfiguration.cursorField,
-    );
-    if (ignoredSourceColumns.length > 0) {
-      logger.info('collector.field_map.ignored_source_columns', {
+    try {
+      const sourceConfiguration = await loadCollectorSourceConfiguration({
         sourceId,
-        ignoredColumns: ignoredSourceColumns,
-        ignoredColumnsCount: ignoredSourceColumns.length,
+        sourceRegistryRepository,
       });
-    }
 
-    const canonicalValidationResult = validateCanonicalCustomerBatch(mappingResult.records);
-    if (canonicalValidationResult.rejectedRecords.length > 0) {
-      logger.info('collector.canonical_validation.rejected_records', {
+      const cursorSnapshot = await cursorRepository.getBySource(sourceId);
+      logger.info('collector.cursor.loaded', {
         sourceId,
-        schemaVersion: canonicalValidationResult.schemaVersion,
-        rejectedRecordsCount: canonicalValidationResult.rejectedRecords.length,
-        rejectedIssues: canonicalValidationResult.rejectedRecords.map((rejectedRecord) => ({
-          index: rejectedRecord.index,
-          issues: rejectedRecord.issues,
-        })),
+        hasPersistedCursor: cursorSnapshot !== null,
+        persistedCursor: cursorSnapshot?.last ?? null,
       });
-    }
 
-    const correlationId =
-      event?.meta?.executionId?.trim() ??
-      `${sourceId}-${event?.meta?.stage ?? 'unknown'}-${sourceConfiguration.cursorField}`;
+      const loadedCredentials = await loadCollectorSourceCredentials({
+        sourceId,
+        engine: sourceConfiguration.engine,
+        secretArn: sourceConfiguration.secretArn,
+        secretRepository,
+        retryPolicy: secretRetryPolicy,
+        nowMs,
+        sleep,
+      });
 
-    const cursorToken = normalizeCursorToken(cursor);
-    const claimCreatedAt = now();
-    const claimExpiration = Math.floor(nowMs() / 1000) + idempotencyTtlSeconds;
+      logger.info('collector.source_credentials.loaded', {
+        sourceId,
+        engine: sourceConfiguration.engine,
+        attempts: loadedCredentials.metrics.attempts,
+        durationMs: loadedCredentials.metrics.durationMs,
+      });
 
-    const nonDuplicatedUpsertRecords: CollectorStandardizedRecord[] = [];
-    const duplicatedUpsertRecords: CollectorStandardizedRecord[] = [];
-    for (const record of canonicalValidationResult.validRecords) {
-      const recordId = normalizeRecordId(record);
-      if (recordId.length === 0) {
-        duplicatedUpsertRecords.push(record);
-        continue;
+      const cursor = resolveCursorValue(event?.cursor, cursorSnapshot?.last, defaultCursorValue);
+
+      let records: CollectorStandardizedRecord[];
+      switch (sourceConfiguration.engine) {
+        case 'postgres':
+          records = await collectPostgresRecords({
+            sourceId,
+            queryTemplate: sourceConfiguration.query,
+            cursor,
+            postgresQueryExecutor: postgresQueryExecutorFactory(loadedCredentials.credentials),
+          });
+          break;
+        case 'mysql':
+          records = await collectMySqlRecords({
+            sourceId,
+            queryTemplate: sourceConfiguration.query,
+            cursor,
+            mySqlQueryExecutor: mySqlQueryExecutorFactory(loadedCredentials.credentials),
+          });
+          break;
+        default:
+          throw new Error(
+            `Collector engine "${String(sourceConfiguration.engine)}" is not supported yet.`,
+          );
       }
 
-      const claimed = await idempotencyRepository.tryClaim({
-        deduplicationKey: buildDeduplicationKey({
+      logger.info('collector.source_records.collected', {
+        sourceId,
+        engine: sourceConfiguration.engine,
+        cursor,
+        recordsCollected: records.length,
+      });
+
+      const requiredCanonicalFields = sourceConfiguration.fieldMap.id ? ['id'] : [];
+      const mappingResult = mapRecordsWithFieldMap({
+        sourceId,
+        records,
+        fieldMap: sourceConfiguration.fieldMap,
+        requiredCanonicalFields,
+      });
+
+      const ignoredSourceColumns = mappingResult.ignoredSourceColumns.filter(
+        (sourceColumn) => sourceColumn !== sourceConfiguration.cursorField,
+      );
+      if (ignoredSourceColumns.length > 0) {
+        logger.info('collector.field_map.ignored_source_columns', {
+          sourceId,
+          ignoredColumns: ignoredSourceColumns,
+          ignoredColumnsCount: ignoredSourceColumns.length,
+        });
+      }
+
+      const canonicalValidationResult = validateCanonicalCustomerBatch(mappingResult.records);
+      if (canonicalValidationResult.rejectedRecords.length > 0) {
+        logger.info('collector.canonical_validation.rejected_records', {
+          sourceId,
+          schemaVersion: canonicalValidationResult.schemaVersion,
+          rejectedRecordsCount: canonicalValidationResult.rejectedRecords.length,
+          rejectedIssues: canonicalValidationResult.rejectedRecords.map((rejectedRecord) => ({
+            index: rejectedRecord.index,
+            issues: rejectedRecord.issues,
+          })),
+        });
+      }
+
+      const correlationId =
+        event?.meta?.executionId?.trim() ??
+        `${sourceId}-${event?.meta?.stage ?? 'unknown'}-${sourceConfiguration.cursorField}`;
+
+      const cursorToken = normalizeCursorToken(cursor);
+      const claimCreatedAt = now();
+      const claimExpiration = Math.floor(nowMs() / 1000) + idempotencyTtlSeconds;
+
+      const nonDuplicatedUpsertRecords: CollectorStandardizedRecord[] = [];
+      const duplicatedUpsertRecords: CollectorStandardizedRecord[] = [];
+      for (const record of canonicalValidationResult.validRecords) {
+        const recordId = normalizeRecordId(record);
+        if (recordId.length === 0) {
+          duplicatedUpsertRecords.push(record);
+          continue;
+        }
+
+        const claimed = await idempotencyRepository.tryClaim({
+          deduplicationKey: buildDeduplicationKey({
+            scope: 'upsert',
+            sourceId,
+            recordId,
+            cursorToken,
+          }),
           scope: 'upsert',
           sourceId,
           recordId,
-          cursorToken,
-        }),
-        scope: 'upsert',
-        sourceId,
-        recordId,
-        cursor: cursorToken,
-        correlationId,
-        createdAt: claimCreatedAt,
-        expiresAtEpochSeconds: claimExpiration,
-      });
+          cursor: cursorToken,
+          correlationId,
+          createdAt: claimCreatedAt,
+          expiresAtEpochSeconds: claimExpiration,
+        });
 
-      if (claimed) {
-        nonDuplicatedUpsertRecords.push(record);
-      } else {
-        duplicatedUpsertRecords.push(record);
+        if (claimed) {
+          nonDuplicatedUpsertRecords.push(record);
+        } else {
+          duplicatedUpsertRecords.push(record);
+        }
       }
-    }
-    if (duplicatedUpsertRecords.length > 0) {
-      logger.info('collector.idempotency.upsert_deduplicated', {
-        sourceId,
-        correlationId,
-        deduplicatedCount: duplicatedUpsertRecords.length,
-      });
-      logger.info('collector.idempotency.metric', {
-        _aws: {
-          Timestamp: nowMs(),
-          CloudWatchMetrics: [
-            {
-              Namespace: 'AlertOrchestrationService/Collector',
-              Dimensions: [['Stage', 'Scope']],
-              Metrics: [{ Name: 'DeduplicatedRecords', Unit: 'Count' }],
-            },
-          ],
-        },
-        Stage: event?.meta?.stage ?? process.env.STAGE ?? 'unknown',
-        Scope: 'upsert',
-        DeduplicatedRecords: duplicatedUpsertRecords.length,
-      });
-    }
-
-    const upsertResult = await upsertCustomersBatchClient({
-      sourceId,
-      correlationId,
-      records: nonDuplicatedUpsertRecords,
-    });
-    if (upsertResult.rejectedRecords.length > 0) {
-      logger.info('collector.official_api.partial_rejection', {
-        sourceId,
-        correlationId,
-        rejectedRecordsCount: upsertResult.rejectedRecords.length,
-        attempts: upsertResult.attempts,
-      });
-    }
-
-    const processedAt = now();
-    const nonDuplicatedEventRecords: CollectorStandardizedRecord[] = [];
-    const duplicatedEventRecords: CollectorStandardizedRecord[] = [];
-    for (const record of upsertResult.persistedRecords) {
-      const recordId = normalizeRecordId(record);
-      if (recordId.length === 0) {
-        duplicatedEventRecords.push(record);
-        continue;
+      if (duplicatedUpsertRecords.length > 0) {
+        logger.info('collector.idempotency.upsert_deduplicated', {
+          sourceId,
+          correlationId,
+          deduplicatedCount: duplicatedUpsertRecords.length,
+        });
+        logger.info('collector.idempotency.metric', {
+          _aws: {
+            Timestamp: nowMs(),
+            CloudWatchMetrics: [
+              {
+                Namespace: 'AlertOrchestrationService/Collector',
+                Dimensions: [['Stage', 'Scope']],
+                Metrics: [{ Name: 'DeduplicatedRecords', Unit: 'Count' }],
+              },
+            ],
+          },
+          Stage: event?.meta?.stage ?? process.env.STAGE ?? 'unknown',
+          Scope: 'upsert',
+          DeduplicatedRecords: duplicatedUpsertRecords.length,
+        });
       }
 
-      const claimed = await idempotencyRepository.tryClaim({
-        deduplicationKey: buildDeduplicationKey({
+      const upsertResult = await upsertCustomersBatchClient({
+        sourceId,
+        correlationId,
+        records: nonDuplicatedUpsertRecords,
+      });
+      if (upsertResult.rejectedRecords.length > 0) {
+        logger.info('collector.official_api.partial_rejection', {
+          sourceId,
+          correlationId,
+          rejectedRecordsCount: upsertResult.rejectedRecords.length,
+          attempts: upsertResult.attempts,
+        });
+      }
+
+      const processedAt = now();
+      const nonDuplicatedEventRecords: CollectorStandardizedRecord[] = [];
+      const duplicatedEventRecords: CollectorStandardizedRecord[] = [];
+      for (const record of upsertResult.persistedRecords) {
+        const recordId = normalizeRecordId(record);
+        if (recordId.length === 0) {
+          duplicatedEventRecords.push(record);
+          continue;
+        }
+
+        const claimed = await idempotencyRepository.tryClaim({
+          deduplicationKey: buildDeduplicationKey({
+            scope: 'event',
+            sourceId,
+            recordId,
+            cursorToken,
+          }),
           scope: 'event',
           sourceId,
           recordId,
-          cursorToken,
-        }),
-        scope: 'event',
-        sourceId,
-        recordId,
-        cursor: cursorToken,
-        correlationId,
-        createdAt: claimCreatedAt,
-        expiresAtEpochSeconds: claimExpiration,
-      });
+          cursor: cursorToken,
+          correlationId,
+          createdAt: claimCreatedAt,
+          expiresAtEpochSeconds: claimExpiration,
+        });
 
-      if (claimed) {
-        nonDuplicatedEventRecords.push(record);
-      } else {
-        duplicatedEventRecords.push(record);
+        if (claimed) {
+          nonDuplicatedEventRecords.push(record);
+        } else {
+          duplicatedEventRecords.push(record);
+        }
       }
-    }
-    if (duplicatedEventRecords.length > 0) {
-      logger.info('collector.idempotency.event_deduplicated', {
+      if (duplicatedEventRecords.length > 0) {
+        logger.info('collector.idempotency.event_deduplicated', {
+          sourceId,
+          correlationId,
+          deduplicatedCount: duplicatedEventRecords.length,
+        });
+        logger.info('collector.idempotency.metric', {
+          _aws: {
+            Timestamp: nowMs(),
+            CloudWatchMetrics: [
+              {
+                Namespace: 'AlertOrchestrationService/Collector',
+                Dimensions: [['Stage', 'Scope']],
+                Metrics: [{ Name: 'DeduplicatedRecords', Unit: 'Count' }],
+              },
+            ],
+          },
+          Stage: event?.meta?.stage ?? process.env.STAGE ?? 'unknown',
+          Scope: 'event',
+          DeduplicatedRecords: duplicatedEventRecords.length,
+        });
+      }
+
+      const publishResult = await customerEventsPublisher({
         sourceId,
         correlationId,
-        deduplicatedCount: duplicatedEventRecords.length,
+        records: nonDuplicatedEventRecords,
+        publishedAt: processedAt,
       });
-      logger.info('collector.idempotency.metric', {
-        _aws: {
-          Timestamp: nowMs(),
-          CloudWatchMetrics: [
-            {
-              Namespace: 'AlertOrchestrationService/Collector',
-              Dimensions: [['Stage', 'Scope']],
-              Metrics: [{ Name: 'DeduplicatedRecords', Unit: 'Count' }],
-            },
-          ],
-        },
-        Stage: event?.meta?.stage ?? process.env.STAGE ?? 'unknown',
-        Scope: 'event',
-        DeduplicatedRecords: duplicatedEventRecords.length,
-      });
-    }
+      if (publishResult.publishedCount > 0) {
+        logger.info('collector.sns.events_published', {
+          sourceId,
+          correlationId,
+          publishedCount: publishResult.publishedCount,
+        });
+      }
 
-    const publishResult = await customerEventsPublisher({
-      sourceId,
-      correlationId,
-      records: nonDuplicatedEventRecords,
-      publishedAt: processedAt,
-    });
-    if (publishResult.publishedCount > 0) {
-      logger.info('collector.sns.events_published', {
-        sourceId,
-        correlationId,
-        publishedCount: publishResult.publishedCount,
-      });
-    }
-
-    const candidateCursor = resolveLatestCursorFromRecords({
-      records,
-      cursorField: sourceConfiguration.cursorField,
-    });
-
-    if (candidateCursor === null) {
-      logger.info('collector.cursor.update_skipped', {
-        sourceId,
-        reason: 'no-cursor-value-found',
+      const candidateCursor = resolveLatestCursorFromRecords({
+        records,
         cursorField: sourceConfiguration.cursorField,
-        recordsCollected: records.length,
       });
-    } else {
-      await persistCollectorCursor({
-        sourceId,
-        candidateCursor,
-        initialSnapshot: cursorSnapshot,
-        cursorRepository,
-        updatedAt: processedAt,
-        logger,
-      });
-    }
 
-    return {
-      sourceId,
-      processedAt,
-      recordsSent: upsertResult.persistedRecords.length,
-      records: upsertResult.persistedRecords,
-      schemaVersion: canonicalValidationResult.schemaVersion,
-      rejectedRecords: canonicalValidationResult.rejectedRecords,
-      persistenceRejectedRecords: upsertResult.rejectedRecords,
-      upsertAttempts: upsertResult.attempts,
-      eventsPublished: publishResult.publishedCount,
-      deduplicatedUpsertRecords: duplicatedUpsertRecords.length,
-      deduplicatedEventRecords: duplicatedEventRecords.length,
-    };
+      if (candidateCursor === null) {
+        logger.info('collector.cursor.update_skipped', {
+          sourceId,
+          reason: 'no-cursor-value-found',
+          cursorField: sourceConfiguration.cursorField,
+          recordsCollected: records.length,
+        });
+      } else {
+        await persistCollectorCursor({
+          sourceId,
+          candidateCursor,
+          initialSnapshot: cursorSnapshot,
+          cursorRepository,
+          updatedAt: processedAt,
+          logger,
+        });
+      }
+
+      const result: CollectorResult = {
+        sourceId,
+        processedAt,
+        recordsSent: upsertResult.persistedRecords.length,
+        records: upsertResult.persistedRecords,
+        schemaVersion: canonicalValidationResult.schemaVersion,
+        rejectedRecords: canonicalValidationResult.rejectedRecords,
+        persistenceRejectedRecords: upsertResult.rejectedRecords,
+        upsertAttempts: upsertResult.attempts,
+        eventsPublished: publishResult.publishedCount,
+        deduplicatedUpsertRecords: duplicatedUpsertRecords.length,
+        deduplicatedEventRecords: duplicatedEventRecords.length,
+      };
+
+      await metricsPublisher.publish([
+        {
+          name: 'CollectorRecordsCollected',
+          value: records.length,
+          unit: 'Count',
+          dimensions: {
+            SourceId: sourceId,
+          },
+        },
+        {
+          name: 'CollectorRecordsPersisted',
+          value: result.recordsSent,
+          unit: 'Count',
+          dimensions: {
+            SourceId: sourceId,
+          },
+        },
+        {
+          name: 'CollectorRecordsRejected',
+          value: result.rejectedRecords.length + result.persistenceRejectedRecords.length,
+          unit: 'Count',
+          dimensions: {
+            SourceId: sourceId,
+          },
+        },
+      ]);
+
+      executionStatus = 'SUCCEEDED';
+      return result;
+    } finally {
+      await metricsPublisher.publish([
+        {
+          name: executionStatus === 'SUCCEEDED' ? 'CollectorExecutionSuccess' : 'CollectorExecutionFailure',
+          value: 1,
+          unit: 'Count',
+          dimensions: {
+            SourceId: sourceId,
+          },
+        },
+        {
+          name: 'CollectorExecutionLatencyMs',
+          value: nowMs() - executionStartedAtMs,
+          unit: 'Milliseconds',
+          dimensions: {
+            SourceId: sourceId,
+          },
+        },
+      ]);
+    }
   };
 
 export async function handler(event: CollectorEvent): Promise<CollectorResult> {

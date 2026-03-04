@@ -17,6 +17,7 @@ class SpyLogger {
 describe('createIntegrationExternalApiClient', () => {
   it('sends mapped payload and logs response time', async () => {
     const requests: unknown[] = [];
+    const metricCalls: unknown[] = [];
     const logger = new SpyLogger();
     let current = 1000;
     const nowMs = () => {
@@ -30,6 +31,10 @@ describe('createIntegrationExternalApiClient', () => {
       timeoutMs: 3000,
       nowMs,
       logger,
+      metricsPublisher: (metric) => {
+        metricCalls.push(metric);
+        return Promise.resolve();
+      },
       httpClient: (request) => {
         requests.push(request);
         return Promise.resolve({
@@ -79,6 +84,14 @@ describe('createIntegrationExternalApiClient', () => {
           durationMs: 25,
         },
       ],
+    ]);
+    expect(metricCalls).toEqual([
+      {
+        integrationId: 'salesforce',
+        sourceId: 'source-1',
+        statusCode: 202,
+        durationMs: 25,
+      },
     ]);
   });
 

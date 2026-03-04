@@ -9,10 +9,16 @@ import {
   createIntegrationExternalApiClient,
 } from '../infra/integrations/external-api-client';
 import { createFetchIntegrationHttpClient } from '../infra/integrations/fetch-integration-http-client';
+import { createCloudWatchMetricsPublisher } from '../infra/observability/cloudwatch-metrics-publisher';
+import { createIntegrationDeliveryMetricsPublisher } from '../infra/observability/integration-delivery-metrics-publisher';
 
 const SALESFORCE_INTEGRATION_NAME = 'salesforce';
 const SALESFORCE_TARGET_BASE_URL_ENV = 'SALESFORCE_INTEGRATION_TARGET_BASE_URL';
 const INTEGRATION_API_TIMEOUT_MS_ENV = 'INTEGRATION_API_TIMEOUT_MS';
+const METRICS_NAMESPACE_ENV = 'METRICS_NAMESPACE';
+const METRICS_NAMESPACE_DEFAULT = 'AlertOrchestrationService/Runtime';
+const STAGE_ENV = 'STAGE';
+const SERVICE_NAME_ENV = 'SERVICE_NAME';
 const INTEGRATION_API_TIMEOUT_MS_DEFAULT = 5000;
 const INTEGRATION_API_TIMEOUT_MS_MIN = 100;
 const INTEGRATION_API_TIMEOUT_MS_MAX = 60000;
@@ -51,6 +57,13 @@ const getHandler = (): ((event: IntegrationConsumerSqsEvent) => Promise<Integrat
     targetBaseUrl,
     timeoutMs,
     httpClient: createFetchIntegrationHttpClient(),
+    metricsPublisher: createIntegrationDeliveryMetricsPublisher({
+      runtimeMetricsPublisher: createCloudWatchMetricsPublisher({
+        namespace: process.env[METRICS_NAMESPACE_ENV] ?? METRICS_NAMESPACE_DEFAULT,
+        stage: process.env[STAGE_ENV] ?? 'unknown',
+        serviceName: process.env[SERVICE_NAME_ENV] ?? 'alert-orchestration-service',
+      }),
+    }),
   });
 
   cachedHandler = createIntegrationConsumerHandler({

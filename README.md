@@ -87,6 +87,9 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por integração.
 - Alarmes de DLQ por integração com métrica `AWS/SQS::ApproximateNumberOfMessagesVisible` e limiar por stage (`salesforceDlqAlarmThreshold` e `hubspotDlqAlarmThreshold`).
 - Ações de notificação dos alarmes direcionadas para tópico SNS operacional `${service}-${stage}-dlq-alarms`.
+- Métricas customizadas de runtime publicadas no namespace `AlertOrchestrationService/Runtime` (`METRICS_NAMESPACE`):
+  - Coletora por `SourceId`: `CollectorRecordsCollected`, `CollectorRecordsPersisted`, `CollectorRecordsRejected`, `CollectorExecutionSuccess`, `CollectorExecutionFailure`, `CollectorExecutionLatencyMs`.
+  - Entrega de integrações por `IntegrationId` + `SourceId`: `IntegrationDeliveryAttempt`, `IntegrationDeliverySuccess`, `IntegrationDeliveryFailure`, `IntegrationDeliveryLatencyMs`.
 - Subscription SNS -> SQS explícita para fan-out em ambas as integrações:
   - `SalesforceIntegrationSubscription` conectando `ClientEventsTopic` em `SalesforceIntegrationQueue`.
   - `HubspotIntegrationSubscription` conectando `ClientEventsTopic` em `HubspotIntegrationQueue`.

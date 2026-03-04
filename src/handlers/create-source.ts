@@ -18,6 +18,10 @@ import {
   toTelemetryLogContext,
   withTelemetrySpan,
 } from '../shared/observability/open-telemetry';
+import {
+  resolveSecretArnStagePolicy,
+  validateSecretArnAgainstStagePolicy,
+} from '../shared/security/secret-arn-stage-policy';
 import { nowIso } from '../shared/time/now-iso';
 
 const JSON_HEADERS = {
@@ -227,6 +231,22 @@ export const createHandler =
           updatedAt: createdAt,
         };
         span.setAttribute('sourceId', record.sourceId);
+        const secretArnPolicyValidation = validateSecretArnAgainstStagePolicy({
+          secretArn: record.secretArn,
+          policy: resolveSecretArnStagePolicy(),
+        });
+        if (!secretArnPolicyValidation.success) {
+          logger.info('api.sources.create.rejected', {
+            correlationId,
+            statusCode: 400,
+            sourceId: record.sourceId,
+            reason: 'secret_arn_stage_mismatch',
+          });
+          return response(400, {
+            message: secretArnPolicyValidation.reason,
+            code: 'SECRET_ARN_STAGE_MISMATCH',
+          });
+        }
 
         try {
           await runInChildSpan(

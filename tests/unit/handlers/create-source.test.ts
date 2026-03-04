@@ -145,6 +145,49 @@ describe('create-source handler', () => {
     expect(repository.created).toHaveLength(0);
   });
 
+  it('returns 400 when secretArn is incompatible with stage policy', async () => {
+    const previousRegion = process.env.SECRETS_ALLOWED_REGION;
+    const previousAccount = process.env.SECRETS_ALLOWED_ACCOUNT_ID;
+    process.env.SECRETS_ALLOWED_REGION = 'us-east-1';
+    process.env.SECRETS_ALLOWED_ACCOUNT_ID = '123456789012';
+
+    try {
+      const repository = new SpySourceRegistryRepository();
+      const handler = createHandler({
+        sourceRegistryRepository: repository,
+        now: () => '2026-03-03T12:00:00.000Z',
+      });
+
+      const result = await handler({
+        body: JSON.stringify({
+          ...VALID_INTERVAL_SOURCE,
+          secretArn: 'arn:aws:secretsmanager:us-west-2:123456789012:secret:acme/source-db',
+        }),
+        requestContext: tenantRequestContext(),
+      });
+
+      expect(result.statusCode).toBe(400);
+      expect(JSON.parse(result.body)).toEqual({
+        message:
+          'secretArn region "us-west-2" is incompatible with stage "unknown" (expected "us-east-1").',
+        code: 'SECRET_ARN_STAGE_MISMATCH',
+      });
+      expect(repository.created).toHaveLength(0);
+    } finally {
+      if (previousRegion === undefined) {
+        delete process.env.SECRETS_ALLOWED_REGION;
+      } else {
+        process.env.SECRETS_ALLOWED_REGION = previousRegion;
+      }
+
+      if (previousAccount === undefined) {
+        delete process.env.SECRETS_ALLOWED_ACCOUNT_ID;
+      } else {
+        process.env.SECRETS_ALLOWED_ACCOUNT_ID = previousAccount;
+      }
+    }
+  });
+
   it('returns 400 when body is invalid json', async () => {
     const handler = createHandler({
       sourceRegistryRepository: new SpySourceRegistryRepository(),

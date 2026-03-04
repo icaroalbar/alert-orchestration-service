@@ -203,6 +203,47 @@ describe('update-source handler', () => {
     expect(parsed.errors.some((entry) => entry.field === 'sourceId')).toBe(true);
   });
 
+  it('returns 400 when merged secretArn is incompatible with stage policy', async () => {
+    const previousRegion = process.env.SECRETS_ALLOWED_REGION;
+    const previousAccount = process.env.SECRETS_ALLOWED_ACCOUNT_ID;
+    process.env.SECRETS_ALLOWED_REGION = 'us-east-1';
+    process.env.SECRETS_ALLOWED_ACCOUNT_ID = '123456789012';
+
+    try {
+      const handler = createHandler({
+        sourceRegistryRepository: new SpySourceRegistryRepository([EXISTING_SOURCE]),
+        now: () => '2026-03-03T12:00:00.000Z',
+      });
+
+      const result = await handler({
+        pathParameters: { id: EXISTING_SOURCE.sourceId },
+        body: JSON.stringify({
+          secretArn: 'arn:aws:secretsmanager:us-west-2:123456789012:secret:acme/source-db',
+        }),
+        requestContext: tenantRequestContext(),
+      });
+
+      expect(result.statusCode).toBe(400);
+      expect(JSON.parse(result.body)).toEqual({
+        message:
+          'secretArn region "us-west-2" is incompatible with stage "unknown" (expected "us-east-1").',
+        code: 'SECRET_ARN_STAGE_MISMATCH',
+      });
+    } finally {
+      if (previousRegion === undefined) {
+        delete process.env.SECRETS_ALLOWED_REGION;
+      } else {
+        process.env.SECRETS_ALLOWED_REGION = previousRegion;
+      }
+
+      if (previousAccount === undefined) {
+        delete process.env.SECRETS_ALLOWED_ACCOUNT_ID;
+      } else {
+        process.env.SECRETS_ALLOWED_ACCOUNT_ID = previousAccount;
+      }
+    }
+  });
+
   it('returns 400 when payload tries to update nextRunAt directly', async () => {
     const handler = createHandler({
       sourceRegistryRepository: new SpySourceRegistryRepository([EXISTING_SOURCE]),

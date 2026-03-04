@@ -1269,6 +1269,64 @@ describe('collector handler', () => {
     expect(postgresFactory.queryCalls).toEqual([]);
   });
 
+  it('fails before Secrets Manager call when source secretArn is incompatible with stage policy', async () => {
+    const previousRegion = process.env.SECRETS_ALLOWED_REGION;
+    const previousAccount = process.env.SECRETS_ALLOWED_ACCOUNT_ID;
+    process.env.SECRETS_ALLOWED_REGION = 'us-east-1';
+    process.env.SECRETS_ALLOWED_ACCOUNT_ID = '123456789012';
+
+    try {
+      const sourceWithForeignSecretArn: SourceRegistryRecord = {
+        ...VALID_SOURCE,
+        sourceId: 'source-foreign-secret',
+        secretArn: 'arn:aws:secretsmanager:us-west-2:123456789012:secret:acme/source-db',
+      };
+      const repository = new SpySourceRegistryRepository(
+        new Map<string, SourceRegistryRecord>([
+          [sourceWithForeignSecretArn.sourceId, sourceWithForeignSecretArn],
+        ]),
+      );
+      const secrets = new SpySecretRepository(
+        new Map<string, string | null>([
+          [
+            sourceWithForeignSecretArn.secretArn,
+            JSON.stringify({
+              host: 'db.internal',
+              port: 5432,
+              database: 'crm',
+              username: 'collector_user',
+              password: 'collector_password',
+            }),
+          ],
+        ]),
+      );
+      const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+      const handler = createCollectorHandler({
+        sourceRegistryRepository: repository,
+        secretRepository: secrets,
+        postgresQueryExecutorFactory: postgresFactory,
+      });
+
+      await expect(handler({ sourceId: sourceWithForeignSecretArn.sourceId })).rejects.toThrow(
+        'Secret ARN policy rejected source "source-foreign-secret": secretArn region "us-west-2" is incompatible with stage "unknown" (expected "us-east-1").',
+      );
+      expect(secrets.getSecretValueCalls).toEqual([]);
+      expect(postgresFactory.queryCalls).toEqual([]);
+    } finally {
+      if (previousRegion === undefined) {
+        delete process.env.SECRETS_ALLOWED_REGION;
+      } else {
+        process.env.SECRETS_ALLOWED_REGION = previousRegion;
+      }
+
+      if (previousAccount === undefined) {
+        delete process.env.SECRETS_ALLOWED_ACCOUNT_ID;
+      } else {
+        process.env.SECRETS_ALLOWED_ACCOUNT_ID = previousAccount;
+      }
+    }
+  });
+
   it('throws controlled error when secret does not exist in Secrets Manager', async () => {
     const repository = new SpySourceRegistryRepository(
       new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),

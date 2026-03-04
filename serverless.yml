@@ -9,6 +9,14 @@ provider:
   logRetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
   tracing:
     lambda: ${self:custom.stages.${self:provider.stage}.tracing}
+  httpApi:
+    authorizers:
+      sourceRegistryJwtAuthorizer:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: ${self:custom.stages.${self:provider.stage}.sourceRegistryJwtIssuerUrl}
+        audience:
+          - ${self:custom.stages.${self:provider.stage}.sourceRegistryJwtAudience}
   environment:
     STAGE: ${self:provider.stage}
     SERVICE_NAME: ${self:service}
@@ -47,6 +55,9 @@ provider:
     ManagedBy: serverless-framework
 
 custom:
+  auth:
+    sourceRegistryReadScope: sources:read
+    sourceRegistryWriteScope: sources:write
   naming:
     prefix: ${self:service}-${self:provider.stage}
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
@@ -69,6 +80,8 @@ custom:
       region: us-east-1
       logRetentionInDays: 7
       tracing: false
+      sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_DEV, 'https://auth.dev.alert-orchestration.internal'}
+      sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_DEV, 'alert-orchestration-service-dev-source-registry-api'}
       sourcesTableName: ${self:service}-dev-sources
       cursorsTableName: ${self:service}-dev-cursors
       clientEventsTopicName: ${self:service}-dev-client-events
@@ -86,6 +99,8 @@ custom:
       region: us-east-1
       logRetentionInDays: 14
       tracing: true
+      sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_STG, 'https://auth.stg.alert-orchestration.internal'}
+      sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_STG, 'alert-orchestration-service-stg-source-registry-api'}
       sourcesTableName: ${self:service}-stg-sources
       cursorsTableName: ${self:service}-stg-cursors
       clientEventsTopicName: ${self:service}-stg-client-events
@@ -103,6 +118,8 @@ custom:
       region: us-east-1
       logRetentionInDays: 30
       tracing: true
+      sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_PROD, 'https://auth.alert-orchestration.internal'}
+      sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_PROD, 'alert-orchestration-service-prod-source-registry-api'}
       sourcesTableName: ${self:service}-prod-sources
       cursorsTableName: ${self:service}-prod-cursors
       clientEventsTopicName: ${self:service}-prod-client-events
@@ -155,6 +172,10 @@ functions:
       - httpApi:
           method: post
           path: /sources
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - ${self:custom.auth.sourceRegistryWriteScope}
   updateSource:
     name: ${self:custom.naming.updateSourceFunctionName}
     handler: dist/handlers/update-source.handler
@@ -169,6 +190,10 @@ functions:
       - httpApi:
           method: patch
           path: /sources/{id}
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - ${self:custom.auth.sourceRegistryWriteScope}
   deleteSource:
     name: ${self:custom.naming.deleteSourceFunctionName}
     handler: dist/handlers/delete-source.handler
@@ -183,6 +208,10 @@ functions:
       - httpApi:
           method: delete
           path: /sources/{id}
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - ${self:custom.auth.sourceRegistryWriteScope}
   listSource:
     name: ${self:custom.naming.listSourceFunctionName}
     handler: dist/handlers/list-sources.handler
@@ -197,6 +226,10 @@ functions:
       - httpApi:
           method: get
           path: /sources
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - ${self:custom.auth.sourceRegistryReadScope}
 
 stepFunctions:
   stateMachines:

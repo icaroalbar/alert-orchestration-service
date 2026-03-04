@@ -8,6 +8,8 @@ Desativar uma fonte do plugin registry com **soft delete** (`active=false`), man
 
 - Método: `DELETE`
 - Rota: `/sources/{id}`
+- Header obrigatório: `Authorization: Bearer <jwt>`
+- Scope obrigatório: `sources:write`
 - `pathParameters.id`: identificador da fonte (`sourceId`)
 
 ## Comportamento
@@ -29,3 +31,7 @@ Desativar uma fonte do plugin registry com **soft delete** (`active=false`), man
   - `code: SOURCE_VERSION_CONFLICT` quando ocorre corrida concorrente e a fonte segue ativa após revalidação.
 - `500 Internal Server Error`
   - falha inesperada na persistência.
+- `401 Unauthorized`
+  - JWT ausente, expirado ou inválido.
+- `403 Forbidden`
+  - JWT válido sem o scope `sources:write`.

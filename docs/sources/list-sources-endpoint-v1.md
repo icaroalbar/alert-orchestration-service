@@ -2,6 +2,11 @@
 
 Endpoint para listagem paginada das fontes cadastradas no plugin registry.
 
+## Autenticação
+
+- Header obrigatório: `Authorization: Bearer <jwt>`.
+- Scope obrigatório: `sources:read`.
+
 ## Query Params
 
 - `limit` (opcional): inteiro entre `1` e `100`. Padrão: `25`.
@@ -55,3 +60,11 @@ Endpoint para listagem paginada das fontes cadastradas no plugin registry.
 ### `500 Internal Server Error`
 
 - Falha inesperada ao consultar o repositório.
+
+### `401 Unauthorized`
+
+- JWT ausente, expirado ou inválido.
+
+### `403 Forbidden`
+
+- JWT válido sem o scope `sources:read`.

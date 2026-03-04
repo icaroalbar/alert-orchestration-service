@@ -96,4 +96,20 @@ describe('stage validation scripts - fallback diagnostics', () => {
     expect(result.output).toContain('fallback-build-ok');
     expect(result.output).not.toContain('UNCLASSIFIED_STAGE_VALIDATION_ERROR');
   });
+
+  it('preserves mapped package fallback behavior for Serverless v4 authentication errors', () => {
+    const result = runScript(STAGE_PACKAGE_SCRIPT, {
+      VALIDATE_STAGE_PACKAGE_COMMAND:
+        'node -e "process.stderr.write(\'Please use \\\\\\"serverless login\\\\\\".\\\\n\'); process.exit(1)"',
+      VALIDATE_STAGE_PACKAGE_FALLBACK_COMMAND:
+        'node -e "process.stdout.write(\'fallback-build-auth-ok\\\\n\')"',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(
+      'empacotamento multi-stage indisponível no ambiente atual (autenticação/licença do Serverless v4)',
+    );
+    expect(result.output).toContain('fallback-build-auth-ok');
+    expect(result.output).not.toContain('UNCLASSIFIED_STAGE_VALIDATION_ERROR');
+  });
 });

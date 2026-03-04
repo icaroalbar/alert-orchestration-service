@@ -239,7 +239,7 @@ Empacotamento para os 3 ambientes:
 npm run validate:stage-package
 ```
 
-Esse comando tenta executar `sls:package:all`; quando credenciais AWS ou conectividade não estão disponíveis, ele faz fallback para `npm run build` e registra aviso.
+Esse comando tenta executar `sls:package:all`; quando credenciais AWS, conectividade ou autenticação/licença do Serverless Framework v4 (`serverless login`) não estão disponíveis, ele faz fallback para `npm run build` e registra aviso.
 
 Empacotamento estrito (requer credenciais AWS válidas no ambiente):
 

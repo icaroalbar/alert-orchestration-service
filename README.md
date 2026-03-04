@@ -82,6 +82,8 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Salesforce DLQ: `${service}-${stage}-salesforce-events-dlq`
   - HubSpot DLQ: `${service}-${stage}-hubspot-events-dlq`
 - Redrive policy habilitada nas filas principais com `maxReceiveCount` versionado por integração.
+- Alarmes de DLQ por integração com métrica `AWS/SQS::ApproximateNumberOfMessagesVisible` e limiar por stage (`salesforceDlqAlarmThreshold` e `hubspotDlqAlarmThreshold`).
+- Ações de notificação dos alarmes direcionadas para tópico SNS operacional `${service}-${stage}-dlq-alarms`.
 - Subscription SNS -> SQS explícita para fan-out em ambas as integrações:
   - `SalesforceIntegrationSubscription` conectando `ClientEventsTopic` em `SalesforceIntegrationQueue`.
   - `HubspotIntegrationSubscription` conectando `ClientEventsTopic` em `HubspotIntegrationQueue`.
@@ -158,6 +160,12 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - ARNs das subscriptions SNS -> SQS expostos por outputs/exports:
   - `SalesforceIntegrationSubscriptionArn`
   - `HubspotIntegrationSubscriptionArn`
+- Alarmes e canal operacional de DLQ expostos por outputs/exports:
+  - `DlqAlarmTopicArn`
+  - `SalesforceIntegrationDlqVisibleMessagesAlarmName`
+  - `SalesforceIntegrationDlqVisibleMessagesAlarmArn`
+  - `HubspotIntegrationDlqVisibleMessagesAlarmName`
+  - `HubspotIntegrationDlqVisibleMessagesAlarmArn`
 
 ### IAM mínimo por função
 

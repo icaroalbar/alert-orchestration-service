@@ -10,6 +10,7 @@ import {
 } from '../domain/sources/source-registry-repository';
 import { calculateNextRunAt } from '../domain/sources/next-run-at';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
@@ -23,6 +24,11 @@ export interface CreateSourceEvent {
   headers?: Record<string, string | undefined>;
   requestContext?: {
     requestId?: string;
+    authorizer?: {
+      jwt?: {
+        claims?: Record<string, unknown>;
+      };
+    };
   };
 }
 
@@ -75,6 +81,9 @@ const parseBody = (
   }
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 const getDefaultDependencies = (): CreateSourceDependencies => {
   if (cachedDefaultDependencies) {
     return cachedDefaultDependencies;
@@ -114,7 +123,43 @@ export const createHandler =
       return parsedBody.response;
     }
 
-    const validation = validateSourceCreatePayload(parsedBody.value);
+    const tenantId = resolveTenantIdFromJwtClaims(event);
+    if (!tenantId) {
+      logger.info('api.sources.create.rejected', {
+        correlationId,
+        statusCode: 401,
+        reason: 'tenant_context_missing',
+      });
+      return response(401, {
+        message: 'Missing tenant context in JWT claims.',
+        code: 'TENANT_CONTEXT_MISSING',
+      });
+    }
+
+    if (
+      isRecord(parsedBody.value) &&
+      typeof parsedBody.value.tenantId === 'string' &&
+      parsedBody.value.tenantId.trim().length > 0 &&
+      parsedBody.value.tenantId.trim() !== tenantId
+    ) {
+      logger.info('api.sources.create.rejected', {
+        correlationId,
+        statusCode: 403,
+        reason: 'tenant_mismatch',
+      });
+      return response(403, {
+        message: 'Payload tenantId does not match authenticated tenant.',
+        code: 'TENANT_CONTEXT_MISMATCH',
+      });
+    }
+
+    const payloadForValidation = isRecord(parsedBody.value)
+      ? {
+          ...parsedBody.value,
+          tenantId,
+        }
+      : parsedBody.value;
+    const validation = validateSourceCreatePayload(payloadForValidation);
     if (!validation.success) {
       logger.info('api.sources.create.rejected', {
         correlationId,

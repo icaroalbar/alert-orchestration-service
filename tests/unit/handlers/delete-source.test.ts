@@ -11,6 +11,7 @@ import {
 import { createHandler } from '../../../src/handlers/delete-source';
 
 const ACTIVE_SOURCE: SourceRegistryRecord = {
+  tenantId: 'tenant-acme',
   sourceId: 'source-acme',
   active: true,
   engine: 'postgres',
@@ -99,6 +100,17 @@ class SpySourceRegistryRepository implements SourceRegistryRepository {
   }
 }
 
+const tenantRequestContext = (requestId?: string) => ({
+  requestId,
+  authorizer: {
+    jwt: {
+      claims: {
+        tenant_id: 'tenant-acme',
+      },
+    },
+  },
+});
+
 describe('delete-source handler', () => {
   it('deactivates active source and returns 204', async () => {
     const repository = new SpySourceRegistryRepository([ACTIVE_SOURCE]);
@@ -109,6 +121,7 @@ describe('delete-source handler', () => {
 
     const result = await handler({
       pathParameters: { id: ACTIVE_SOURCE.sourceId },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result).toEqual({
@@ -140,6 +153,7 @@ describe('delete-source handler', () => {
 
     const result = await handler({
       pathParameters: { id: ACTIVE_SOURCE.sourceId },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(204);
@@ -154,6 +168,7 @@ describe('delete-source handler', () => {
 
     const result = await handler({
       pathParameters: { id: 'missing-source' },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(404);
@@ -190,6 +205,7 @@ describe('delete-source handler', () => {
 
     const result = await handler({
       pathParameters: { id: ACTIVE_SOURCE.sourceId },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(409);
@@ -217,6 +233,7 @@ describe('delete-source handler', () => {
 
     const result = await handler({
       pathParameters: { id: ACTIVE_SOURCE.sourceId },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(204);
@@ -234,6 +251,7 @@ describe('delete-source handler', () => {
 
     const result = await handler({
       pathParameters: { id: ACTIVE_SOURCE.sourceId },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(500);

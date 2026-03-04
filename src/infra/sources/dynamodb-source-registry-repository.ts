@@ -25,6 +25,7 @@ export interface DynamoDbSourceRegistryRepositoryParams {
 }
 
 interface ListTokenPayload {
+  tenantId: string;
   offset: number;
   active?: boolean;
   engine?: SourceEngine;
@@ -53,6 +54,10 @@ const decodeListToken = (token: string): ListTokenPayload => {
     }
 
     const record = parsed as Record<string, unknown>;
+    if (typeof record.tenantId !== 'string' || record.tenantId.trim().length === 0) {
+      throw new SourcePaginationTokenError();
+    }
+
     if (!Number.isInteger(record.offset) || (record.offset as number) < 0) {
       throw new SourcePaginationTokenError();
     }
@@ -78,6 +83,7 @@ const decodeListToken = (token: string): ListTokenPayload => {
     }
 
     return {
+      tenantId: record.tenantId.trim(),
       offset: record.offset as number,
       active,
       engine,
@@ -92,7 +98,9 @@ const decodeListToken = (token: string): ListTokenPayload => {
 };
 
 const areFiltersEqual = (token: ListTokenPayload, params: ListSourceRegistryParams): boolean =>
-  token.active === params.active && token.engine === params.engine;
+  token.tenantId === params.tenantId &&
+  token.active === params.active &&
+  token.engine === params.engine;
 
 const buildScanFilter = (
   params: ListSourceRegistryParams,
@@ -100,8 +108,10 @@ const buildScanFilter = (
   FilterExpression?: string;
   ExpressionAttributeValues?: Record<string, AttributeValue>;
 } => {
-  const expressions: string[] = [];
-  const values: Record<string, AttributeValue> = {};
+  const expressions: string[] = ['tenantId = :tenantId'];
+  const values: Record<string, AttributeValue> = {
+    ':tenantId': { S: params.tenantId },
+  };
 
   if (params.active !== undefined) {
     expressions.push('active = :active');
@@ -113,10 +123,6 @@ const buildScanFilter = (
     values[':engine'] = { S: params.engine };
   }
 
-  if (expressions.length === 0) {
-    return {};
-  }
-
   return {
     FilterExpression: expressions.join(' AND '),
     ExpressionAttributeValues: values,
@@ -124,6 +130,7 @@ const buildScanFilter = (
 };
 
 const toDynamoItem = (source: SourceRegistryRecord): Record<string, unknown> => ({
+  tenantId: source.tenantId,
   sourceId: source.sourceId,
   active: source.active ? 'true' : 'false',
   engine: source.engine,
@@ -160,6 +167,7 @@ const toSourceRegistryRecord = (item: Record<string, AttributeValue>): SourceReg
   }
 
   const validation = validateSourceSchemaV1({
+    tenantId: raw.tenantId,
     sourceId: raw.sourceId,
     active,
     engine: raw.engine,
@@ -238,13 +246,27 @@ export function createDynamoDbSourceRegistryRepository({
       return toSourceRegistryRecord(result.Item);
     },
     async list(params: ListSourceRegistryParams): Promise<ListSourceRegistryResult> {
+      const normalizedTenantId = params.tenantId.trim();
+      if (normalizedTenantId.length === 0) {
+        throw new Error('tenantId is required for source listing.');
+      }
+
       const tokenPayload = params.nextToken ? decodeListToken(params.nextToken) : undefined;
       const offset = tokenPayload?.offset ?? 0;
-      if (tokenPayload && !areFiltersEqual(tokenPayload, params)) {
+      if (
+        tokenPayload &&
+        !areFiltersEqual(tokenPayload, {
+          ...params,
+          tenantId: normalizedTenantId,
+        })
+      ) {
         throw new SourcePaginationTokenError('Pagination token does not match provided filters.');
       }
 
-      const filter = buildScanFilter(params);
+      const filter = buildScanFilter({
+        ...params,
+        tenantId: normalizedTenantId,
+      });
       const items: SourceRegistryRecord[] = [];
       let lastEvaluatedKey: Record<string, AttributeValue> | undefined;
 
@@ -270,6 +292,7 @@ export function createDynamoDbSourceRegistryRepository({
       const nextToken =
         nextOffset < sorted.length
           ? encodeListToken({
+              tenantId: normalizedTenantId,
               offset: nextOffset,
               active: params.active,
               engine: params.engine,

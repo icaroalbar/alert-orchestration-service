@@ -43,6 +43,7 @@ describe('createUpsertCustomersBatchClient', () => {
 
     const result = await client({
       sourceId: 'source-1',
+      tenantId: 'tenant-acme',
       correlationId: 'exec-1',
       records: [
         { id: 1, email: 'a@example.com' },
@@ -113,6 +114,7 @@ describe('createUpsertCustomersBatchClient', () => {
 
     const result = await client({
       sourceId: 'source-1',
+      tenantId: 'tenant-acme',
       correlationId: 'exec-1',
       records: [{ id: 1, email: 'a@example.com' }],
     });
@@ -144,6 +146,7 @@ describe('createUpsertCustomersBatchClient', () => {
     await expect(
       client({
         sourceId: 'source-1',
+        tenantId: 'tenant-acme',
         correlationId: 'exec-1',
         records: [{ id: 1 }],
       }),
@@ -171,6 +174,7 @@ describe('createUpsertCustomersBatchClient', () => {
     await expect(
       client({
         sourceId: 'source-1',
+        tenantId: 'tenant-acme',
         correlationId: 'exec-1',
         records: [{ id: 1 }],
       }),

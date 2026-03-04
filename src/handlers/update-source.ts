@@ -11,6 +11,7 @@ import {
 } from '../domain/sources/source-payload-validation';
 import { calculateNextRunAt } from '../domain/sources/next-run-at';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
@@ -27,6 +28,11 @@ export interface UpdateSourceEvent {
   };
   requestContext?: {
     requestId?: string;
+    authorizer?: {
+      jwt?: {
+        claims?: Record<string, unknown>;
+      };
+    };
   };
 }
 
@@ -147,6 +153,20 @@ export const createHandler =
       return parsedBody.response;
     }
 
+    const tenantId = resolveTenantIdFromJwtClaims(event);
+    if (!tenantId) {
+      logger.info('api.sources.update.rejected', {
+        correlationId,
+        statusCode: 401,
+        sourceId: sourceId.value,
+        reason: 'tenant_context_missing',
+      });
+      return response(401, {
+        message: 'Missing tenant context in JWT claims.',
+        code: 'TENANT_CONTEXT_MISSING',
+      });
+    }
+
     const patchValidation = validateSourcePatchPayload(parsedBody.value);
     if (!patchValidation.success) {
       logger.info('api.sources.update.rejected', {
@@ -162,11 +182,12 @@ export const createHandler =
     }
 
     const current = await sourceRegistryRepository.getById(sourceId.value);
-    if (!current) {
+    if (!current || current.tenantId !== tenantId) {
       logger.info('api.sources.update.not_found', {
         correlationId,
         statusCode: 404,
         sourceId: sourceId.value,
+        tenantId,
       });
       return response(404, {
         message: `Source "${sourceId.value}" was not found.`,

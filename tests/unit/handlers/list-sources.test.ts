@@ -10,6 +10,7 @@ import {
 import { createHandler } from '../../../src/handlers/list-sources';
 
 const SOURCE_A: SourceRegistryRecord = {
+  tenantId: 'tenant-acme',
   sourceId: 'source-acme',
   active: true,
   engine: 'postgres',
@@ -58,6 +59,17 @@ class SpySourceRegistryRepository implements SourceRegistryRepository {
   }
 }
 
+const tenantRequestContext = (requestId?: string) => ({
+  requestId,
+  authorizer: {
+    jwt: {
+      claims: {
+        tenant_id: 'tenant-acme',
+      },
+    },
+  },
+});
+
 describe('list-sources handler', () => {
   it('returns paginated source list with default limit', async () => {
     const repository = new SpySourceRegistryRepository({
@@ -69,13 +81,14 @@ describe('list-sources handler', () => {
     });
 
     const result = await handler({
-      requestContext: { requestId: 'req-42' },
+      requestContext: tenantRequestContext('req-42'),
     });
 
     expect(result.statusCode).toBe(200);
     expect(result.headers['content-type']).toBe('application/json');
     expect(repository.listCalls).toEqual([
       {
+        tenantId: 'tenant-acme',
         limit: 25,
         nextToken: undefined,
         active: undefined,
@@ -85,6 +98,7 @@ describe('list-sources handler', () => {
     expect(JSON.parse(result.body)).toEqual({
       items: [SOURCE_A],
       filters: {
+        tenantId: 'tenant-acme',
         active: null,
         engine: null,
       },
@@ -112,11 +126,13 @@ describe('list-sources handler', () => {
         active: 'false',
         engine: 'mysql',
       },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(200);
     expect(repository.listCalls).toEqual([
       {
+        tenantId: 'tenant-acme',
         limit: 10,
         nextToken: 'opaque-token',
         active: false,
@@ -126,6 +142,7 @@ describe('list-sources handler', () => {
     expect(JSON.parse(result.body)).toEqual({
       items: [],
       filters: {
+        tenantId: 'tenant-acme',
         active: false,
         engine: 'mysql',
       },
@@ -146,6 +163,7 @@ describe('list-sources handler', () => {
       queryStringParameters: {
         limit: '0',
       },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(400);
@@ -163,6 +181,7 @@ describe('list-sources handler', () => {
       queryStringParameters: {
         active: 'yes',
       },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(400);
@@ -180,6 +199,7 @@ describe('list-sources handler', () => {
       queryStringParameters: {
         engine: 'oracle',
       },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(400);
@@ -197,6 +217,7 @@ describe('list-sources handler', () => {
       queryStringParameters: {
         nextToken: '   ',
       },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(400);
@@ -217,6 +238,7 @@ describe('list-sources handler', () => {
       queryStringParameters: {
         nextToken: 'invalid-token',
       },
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(400);
@@ -234,7 +256,9 @@ describe('list-sources handler', () => {
       ),
     });
 
-    const result = await handler({});
+    const result = await handler({
+      requestContext: tenantRequestContext(),
+    });
 
     expect(result.statusCode).toBe(500);
     expect(JSON.parse(result.body)).toEqual({

@@ -63,6 +63,11 @@ const decodeToken = (token: string): Record<string, AttributeValue> => {
 const toSchedulerSource = (item: Record<string, AttributeValue>): SchedulerSource => {
   const raw = unmarshall(item) as Record<string, unknown>;
 
+  const tenantId = raw.tenantId;
+  if (typeof tenantId !== 'string' || tenantId.trim().length === 0) {
+    throw new Error('Invalid scheduler source item: tenantId is required.');
+  }
+
   const sourceId = raw.sourceId;
   if (typeof sourceId !== 'string' || sourceId.trim().length === 0) {
     throw new Error('Invalid scheduler source item: sourceId is required.');
@@ -87,6 +92,7 @@ const toSchedulerSource = (item: Record<string, AttributeValue>): SchedulerSourc
     }
 
     return {
+      tenantId: tenantId.trim(),
       sourceId: sourceId.trim(),
       nextRunAt: nextRunAt.trim(),
       scheduleType: 'interval',
@@ -101,6 +107,7 @@ const toSchedulerSource = (item: Record<string, AttributeValue>): SchedulerSourc
     }
 
     return {
+      tenantId: tenantId.trim(),
       sourceId: sourceId.trim(),
       nextRunAt: nextRunAt.trim(),
       scheduleType: 'cron',
@@ -168,7 +175,7 @@ export function createDynamoDbSchedulerSourceRepository({
                 S: 'true',
               },
             },
-        ProjectionExpression: 'sourceId, nextRunAt, scheduleType, intervalMinutes, cronExpr',
+        ProjectionExpression: 'tenantId, sourceId, nextRunAt, scheduleType, intervalMinutes, cronExpr',
         ExclusiveStartKey: nextToken ? decodeToken(nextToken) : undefined,
         Limit: limit,
         ScanIndexForward: true,

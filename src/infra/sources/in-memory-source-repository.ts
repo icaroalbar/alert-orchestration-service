@@ -5,6 +5,7 @@ import type {
 } from '../../domain/scheduler/list-eligible-sources';
 
 interface InMemorySourceBase {
+  tenantId: string;
   sourceId: string;
   nextRunAt: string;
   active?: boolean;
@@ -65,6 +66,7 @@ const resolvePage = (
   const toSchedulerSource = (item: InMemorySource): SchedulerSource => {
     if (item.scheduleType === 'interval') {
       return {
+        tenantId: item.tenantId,
         sourceId: item.sourceId,
         nextRunAt: item.nextRunAt,
         scheduleType: 'interval',
@@ -73,6 +75,7 @@ const resolvePage = (
     }
 
     return {
+      tenantId: item.tenantId,
       sourceId: item.sourceId,
       nextRunAt: item.nextRunAt,
       scheduleType: 'cron',
@@ -92,6 +95,7 @@ export function createInMemorySourceRepository(seed: InMemorySource[] = []): Sou
     .map((item) =>
       item.scheduleType === 'interval'
         ? {
+            tenantId: item.tenantId,
             sourceId: item.sourceId,
             nextRunAt: item.nextRunAt,
             active: true,
@@ -99,6 +103,7 @@ export function createInMemorySourceRepository(seed: InMemorySource[] = []): Sou
             intervalMinutes: item.intervalMinutes,
           }
         : {
+            tenantId: item.tenantId,
             sourceId: item.sourceId,
             nextRunAt: item.nextRunAt,
             active: true,

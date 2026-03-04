@@ -22,6 +22,17 @@ const VALID_INTERVAL_SOURCE = {
   intervalMinutes: 30,
 } as const;
 
+const tenantRequestContext = (requestId?: string) => ({
+  requestId,
+  authorizer: {
+    jwt: {
+      claims: {
+        tenant_id: 'tenant-acme',
+      },
+    },
+  },
+});
+
 class SpySourceRegistryRepository implements SourceRegistryRepository {
   public readonly created: SourceRegistryRecord[] = [];
 
@@ -63,7 +74,7 @@ describe('create-source handler', () => {
 
     const result = await handler({
       body: JSON.stringify(VALID_INTERVAL_SOURCE),
-      requestContext: { requestId: 'req-40' },
+      requestContext: tenantRequestContext('req-40'),
     });
 
     expect(result.statusCode).toBe(201);
@@ -79,6 +90,7 @@ describe('create-source handler', () => {
     });
     expect(repository.created).toHaveLength(1);
     expect(repository.created[0]).toMatchObject({
+      tenantId: 'tenant-acme',
       sourceId: 'source-acme',
       nextRunAt: '2026-03-03T12:30:00.000Z',
       schemaVersion: '1.0.0',
@@ -101,6 +113,7 @@ describe('create-source handler', () => {
         intervalMinutes: undefined,
         cronExpr: '0 */15 * * * *',
       }),
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(201);
@@ -119,6 +132,7 @@ describe('create-source handler', () => {
         ...VALID_INTERVAL_SOURCE,
         sourceId: '',
       }),
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(400);
@@ -157,6 +171,7 @@ describe('create-source handler', () => {
 
     const result = await handler({
       body: JSON.stringify(VALID_INTERVAL_SOURCE),
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(409);
@@ -174,6 +189,7 @@ describe('create-source handler', () => {
 
     const result = await handler({
       body: JSON.stringify(VALID_INTERVAL_SOURCE),
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(500);
@@ -195,6 +211,7 @@ describe('create-source handler', () => {
         intervalMinutes: undefined,
         cronExpr: 'invalid cron',
       }),
+      requestContext: tenantRequestContext(),
     });
 
     expect(result.statusCode).toBe(400);

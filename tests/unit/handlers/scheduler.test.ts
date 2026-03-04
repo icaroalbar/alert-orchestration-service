@@ -52,12 +52,14 @@ describe('scheduler handler', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-b',
             nextRunAt: '2026-03-04T09:00:00.000Z',
             scheduleType: 'interval',
             intervalMinutes: 5,
           },
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-a',
             nextRunAt: '2026-03-04T09:05:00.000Z',
             scheduleType: 'interval',
@@ -69,6 +71,7 @@ describe('scheduler handler', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-c',
             nextRunAt: '2026-03-04T08:59:00.000Z',
             scheduleType: 'interval',
@@ -117,6 +120,16 @@ describe('scheduler handler', () => {
       },
     ]);
     expect(result.sourceIds).toEqual(['source-b', 'source-c']);
+    expect(result.sources).toEqual([
+      {
+        sourceId: 'source-b',
+        tenantId: 'tenant-acme',
+      },
+      {
+        sourceId: 'source-c',
+        tenantId: 'tenant-acme',
+      },
+    ]);
     expect(result.contractVersion).toBe('scheduler-output.v1');
     expect(result.eligibleSources).toBe(2);
     expect(result.hasEligibleSources).toBe(true);
@@ -126,6 +139,7 @@ describe('scheduler handler', () => {
     expect(logger.info).toHaveBeenCalledWith('scheduler.eligible_sources.filtered', {
       referenceNow: '2026-03-04T09:01:00.000Z',
       eligibleSources: 2,
+      tenants: 1,
       correlationId: null,
     });
   });
@@ -136,12 +150,14 @@ describe('scheduler handler', () => {
         {
           items: [
             {
+              tenantId: 'tenant-acme',
               sourceId: 'source-a',
               nextRunAt: '2026-03-04T09:00:00.000Z',
               scheduleType: 'interval',
               intervalMinutes: 5,
             },
             {
+              tenantId: 'tenant-acme',
               sourceId: 'source-b',
               nextRunAt: '2026-03-04T09:00:00.000Z',
               scheduleType: 'interval',
@@ -174,12 +190,14 @@ describe('scheduler handler', () => {
         {
           items: [
             {
+              tenantId: 'tenant-acme',
               sourceId: 'source-a',
               nextRunAt: '2026-03-04T09:00:00.000Z',
               scheduleType: 'interval',
               intervalMinutes: 5,
             },
             {
+              tenantId: 'tenant-acme',
               sourceId: 'source-b',
               nextRunAt: '2026-03-04T09:00:00.000Z',
               scheduleType: 'interval',
@@ -236,12 +254,14 @@ describe('scheduler handler', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-a',
             nextRunAt: '2026-03-04T10:00:00.000Z',
             scheduleType: 'interval',
             intervalMinutes: 5,
           },
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-b',
             nextRunAt: '2026-03-04T10:01:00.000Z',
             scheduleType: 'interval',
@@ -317,6 +337,7 @@ describe('scheduler handler', () => {
 
     expect(result).toEqual({
       contractVersion: 'scheduler-output.v1',
+      sources: [],
       sourceIds: [],
       eligibleSources: 0,
       hasEligibleSources: false,
@@ -327,6 +348,7 @@ describe('scheduler handler', () => {
     expect(logger.info).toHaveBeenCalledWith('scheduler.eligible_sources.filtered', {
       referenceNow: '2026-03-04T10:01:00.000Z',
       eligibleSources: 0,
+      tenants: 0,
       correlationId: 'exec-123',
     });
   });

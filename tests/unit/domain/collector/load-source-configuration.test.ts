@@ -9,6 +9,7 @@ import {
 import type { SourceRegistryRecord } from '../../../../src/domain/sources/source-registry-repository';
 
 const VALID_SOURCE: SourceRegistryRecord = {
+  tenantId: 'tenant-acme',
   sourceId: 'source-acme',
   active: true,
   engine: 'postgres',

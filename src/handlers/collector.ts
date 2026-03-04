@@ -115,6 +115,7 @@ type MySqlQueryExecutorFactory = (credentials: CollectorSourceCredentials) => My
 
 export interface CollectorEvent {
   sourceId: string;
+  tenantId?: string;
   cursor?: string | number | null;
   meta?: {
     executionId?: string;
@@ -124,6 +125,7 @@ export interface CollectorEvent {
 
 export interface CollectorResult {
   sourceId: string;
+  tenantId: string;
   processedAt: string;
   recordsSent: number;
   records: CollectorStandardizedRecord[];
@@ -735,6 +737,7 @@ export const createHandler =
     if (sourceId.length === 0) {
       throw new Error('sourceId is required for collector execution.');
     }
+    let resolvedTenantId = event.tenantId?.trim() || 'unknown';
     let executionStatus: 'SUCCEEDED' | 'FAILED' = 'FAILED';
 
     try {
@@ -742,10 +745,19 @@ export const createHandler =
         sourceId,
         sourceRegistryRepository,
       });
+      const eventTenantId = event.tenantId?.trim();
+      if (eventTenantId && eventTenantId !== sourceConfiguration.tenantId) {
+        throw new Error(
+          `Collector tenant mismatch for source "${sourceId}": expected "${sourceConfiguration.tenantId}" but received "${eventTenantId}".`,
+        );
+      }
+      const tenantId = eventTenantId || sourceConfiguration.tenantId;
+      resolvedTenantId = tenantId;
 
       const cursorSnapshot = await cursorRepository.getBySource(sourceId);
       logger.info('collector.cursor.loaded', {
         sourceId,
+        tenantId,
         hasPersistedCursor: cursorSnapshot !== null,
         persistedCursor: cursorSnapshot?.last ?? null,
       });
@@ -762,6 +774,7 @@ export const createHandler =
 
       logger.info('collector.source_credentials.loaded', {
         sourceId,
+        tenantId,
         engine: sourceConfiguration.engine,
         attempts: loadedCredentials.metrics.attempts,
         durationMs: loadedCredentials.metrics.durationMs,
@@ -795,6 +808,7 @@ export const createHandler =
 
       logger.info('collector.source_records.collected', {
         sourceId,
+        tenantId,
         engine: sourceConfiguration.engine,
         cursor,
         recordsCollected: records.length,
@@ -904,6 +918,7 @@ export const createHandler =
 
       const upsertResult = await upsertCustomersBatchClient({
         sourceId,
+        tenantId,
         correlationId,
         records: nonDuplicatedUpsertRecords,
       });
@@ -1031,6 +1046,7 @@ export const createHandler =
       for (const record of nonDuplicatedEventRecords) {
         await customerEventsPublisher({
           sourceId,
+          tenantId,
           correlationId,
           records: [record],
           publishedAt: processedAt,
@@ -1094,6 +1110,7 @@ export const createHandler =
 
       const result: CollectorResult = {
         sourceId,
+        tenantId,
         processedAt,
         recordsSent: upsertResult.persistedRecords.length,
         records: upsertResult.persistedRecords,
@@ -1113,6 +1130,7 @@ export const createHandler =
           unit: 'Count',
           dimensions: {
             SourceId: sourceId,
+            TenantId: tenantId,
           },
         },
         {
@@ -1121,6 +1139,7 @@ export const createHandler =
           unit: 'Count',
           dimensions: {
             SourceId: sourceId,
+            TenantId: tenantId,
           },
         },
         {
@@ -1129,6 +1148,7 @@ export const createHandler =
           unit: 'Count',
           dimensions: {
             SourceId: sourceId,
+            TenantId: tenantId,
           },
         },
       ]);
@@ -1143,6 +1163,7 @@ export const createHandler =
           unit: 'Count',
           dimensions: {
             SourceId: sourceId,
+            TenantId: resolvedTenantId,
           },
         },
         {
@@ -1151,6 +1172,7 @@ export const createHandler =
           unit: 'Milliseconds',
           dimensions: {
             SourceId: sourceId,
+            TenantId: resolvedTenantId,
           },
         },
       ]);

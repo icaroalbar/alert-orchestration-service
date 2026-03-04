@@ -1,13 +1,28 @@
 import type {
   ListActiveSourcesResult,
+  SchedulerSource,
   SourceRepository,
 } from '../../domain/scheduler/list-eligible-sources';
 
-export interface InMemorySource {
+interface InMemorySourceBase {
   sourceId: string;
   nextRunAt: string;
   active?: boolean;
 }
+
+interface InMemorySourceInterval extends InMemorySourceBase {
+  scheduleType: 'interval';
+  intervalMinutes: number;
+  cronExpr?: undefined;
+}
+
+interface InMemorySourceCron extends InMemorySourceBase {
+  scheduleType: 'cron';
+  intervalMinutes?: undefined;
+  cronExpr: string;
+}
+
+export type InMemorySource = InMemorySourceInterval | InMemorySourceCron;
 
 interface InMemoryPaginationToken {
   offset: number;
@@ -47,11 +62,26 @@ const resolvePage = (
   const pageItems = items.slice(offset, offset + limit);
   const nextOffset = offset + pageItems.length;
 
-  return {
-    items: pageItems.map((item) => ({
+  const toSchedulerSource = (item: InMemorySource): SchedulerSource => {
+    if (item.scheduleType === 'interval') {
+      return {
+        sourceId: item.sourceId,
+        nextRunAt: item.nextRunAt,
+        scheduleType: 'interval',
+        intervalMinutes: item.intervalMinutes,
+      };
+    }
+
+    return {
       sourceId: item.sourceId,
       nextRunAt: item.nextRunAt,
-    })),
+      scheduleType: 'cron',
+      cronExpr: item.cronExpr,
+    };
+  };
+
+  return {
+    items: pageItems.map((item) => toSchedulerSource(item)),
     nextToken: nextOffset < items.length ? encodeToken(nextOffset) : null,
   };
 };
@@ -59,16 +89,41 @@ const resolvePage = (
 export function createInMemorySourceRepository(seed: InMemorySource[] = []): SourceRepository {
   const activeItems = seed
     .filter((item) => item.active !== false)
-    .map((item) => ({
-      sourceId: item.sourceId,
-      nextRunAt: item.nextRunAt,
-      active: true,
-    }))
+    .map((item) =>
+      item.scheduleType === 'interval'
+        ? {
+            sourceId: item.sourceId,
+            nextRunAt: item.nextRunAt,
+            active: true,
+            scheduleType: 'interval' as const,
+            intervalMinutes: item.intervalMinutes,
+          }
+        : {
+            sourceId: item.sourceId,
+            nextRunAt: item.nextRunAt,
+            active: true,
+            scheduleType: 'cron' as const,
+            cronExpr: item.cronExpr,
+          },
+    )
     .sort((left, right) => left.sourceId.localeCompare(right.sourceId));
 
   return {
     listActiveSources(params): Promise<ListActiveSourcesResult> {
       return Promise.resolve(resolvePage(activeItems, params.limit, params.nextToken));
+    },
+    reserveNextRun(params): Promise<boolean> {
+      const source = activeItems.find((item) => item.sourceId === params.sourceId);
+      if (!source) {
+        return Promise.resolve(false);
+      }
+
+      if (source.nextRunAt !== params.expectedNextRunAt) {
+        return Promise.resolve(false);
+      }
+
+      source.nextRunAt = params.nextRunAt;
+      return Promise.resolve(true);
     },
   };
 }

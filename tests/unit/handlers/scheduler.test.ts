@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import type {
   ListActiveSourcesParams,
   ListActiveSourcesResult,
+  ReserveNextRunParams,
   SourceRepository,
 } from '../../../src/domain/scheduler/list-eligible-sources';
 import { createHandler } from '../../../src/handlers/scheduler';
@@ -11,15 +12,24 @@ const ORIGINAL_MAP_MAX_CONCURRENCY = process.env.MAP_MAX_CONCURRENCY;
 
 class SpySourceRepository implements SourceRepository {
   public readonly calls: ListActiveSourcesParams[] = [];
+  public readonly reserveCalls: ReserveNextRunParams[] = [];
   private readonly pages: ListActiveSourcesResult[];
+  private readonly reserveResults: boolean[];
 
-  constructor(pages: ListActiveSourcesResult[]) {
+  constructor(pages: ListActiveSourcesResult[], reserveResults: boolean[] = []) {
     this.pages = pages;
+    this.reserveResults = reserveResults;
   }
 
   listActiveSources(params: ListActiveSourcesParams): Promise<ListActiveSourcesResult> {
     this.calls.push(params);
     return Promise.resolve(this.pages[this.calls.length - 1] ?? { items: [], nextToken: null });
+  }
+
+  reserveNextRun(params: ReserveNextRunParams): Promise<boolean> {
+    this.reserveCalls.push(params);
+    const result = this.reserveResults[this.reserveCalls.length - 1];
+    return Promise.resolve(result ?? true);
   }
 }
 
@@ -35,19 +45,36 @@ afterEach(() => {
 });
 
 describe('scheduler handler', () => {
-  it('returns only eligible sourceIds and logs filtered count with default max concurrency', async () => {
+  it('returns only reserved sourceIds and logs filtered count with default max concurrency', async () => {
     delete process.env.MAP_MAX_CONCURRENCY;
     const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
     const repository = new SpySourceRepository([
       {
         items: [
-          { sourceId: 'source-b', nextRunAt: '2026-03-04T09:00:00.000Z' },
-          { sourceId: 'source-a', nextRunAt: '2026-03-04T09:05:00.000Z' },
+          {
+            sourceId: 'source-b',
+            nextRunAt: '2026-03-04T09:00:00.000Z',
+            scheduleType: 'interval',
+            intervalMinutes: 5,
+          },
+          {
+            sourceId: 'source-a',
+            nextRunAt: '2026-03-04T09:05:00.000Z',
+            scheduleType: 'interval',
+            intervalMinutes: 5,
+          },
         ],
         nextToken: 'page-2',
       },
       {
-        items: [{ sourceId: 'source-c', nextRunAt: '2026-03-04T08:59:00.000Z' }],
+        items: [
+          {
+            sourceId: 'source-c',
+            nextRunAt: '2026-03-04T08:59:00.000Z',
+            scheduleType: 'interval',
+            intervalMinutes: 5,
+          },
+        ],
         nextToken: null,
       },
     ]);
@@ -74,6 +101,20 @@ describe('scheduler handler', () => {
         now: '2026-03-04T09:01:00.000Z',
       },
     ]);
+    expect(repository.reserveCalls).toEqual([
+      {
+        sourceId: 'source-b',
+        expectedNextRunAt: '2026-03-04T09:00:00.000Z',
+        nextRunAt: '2026-03-04T09:06:00.000Z',
+        reservedAt: '2026-03-04T09:01:00.000Z',
+      },
+      {
+        sourceId: 'source-c',
+        expectedNextRunAt: '2026-03-04T08:59:00.000Z',
+        nextRunAt: '2026-03-04T09:06:00.000Z',
+        reservedAt: '2026-03-04T09:01:00.000Z',
+      },
+    ]);
     expect(result.sourceIds).toEqual(['source-b', 'source-c']);
     expect(result.generatedAt).toBe('2026-03-04T10:00:00.000Z');
     expect(result.maxConcurrency).toBe(5);
@@ -81,6 +122,40 @@ describe('scheduler handler', () => {
       referenceNow: '2026-03-04T09:01:00.000Z',
       eligibleSources: 2,
     });
+  });
+
+  it('skips conflicted reservations and keeps handler successful', async () => {
+    const repository = new SpySourceRepository(
+      [
+        {
+          items: [
+            {
+              sourceId: 'source-a',
+              nextRunAt: '2026-03-04T09:00:00.000Z',
+              scheduleType: 'interval',
+              intervalMinutes: 5,
+            },
+            {
+              sourceId: 'source-b',
+              nextRunAt: '2026-03-04T09:00:00.000Z',
+              scheduleType: 'interval',
+              intervalMinutes: 5,
+            },
+          ],
+          nextToken: null,
+        },
+      ],
+      [true, false],
+    );
+    const handler = createHandler({
+      sourceRepository: repository,
+      now: () => '2026-03-04T09:00:00.000Z',
+      activeSourcesPageSize: 10,
+    });
+
+    const result = await handler();
+
+    expect(result.sourceIds).toEqual(['source-a']);
   });
 
   it('returns configured max concurrency from environment', async () => {
@@ -103,8 +178,18 @@ describe('scheduler handler', () => {
     const repository = new SpySourceRepository([
       {
         items: [
-          { sourceId: 'source-a', nextRunAt: '2026-03-04T10:00:00.000Z' },
-          { sourceId: 'source-b', nextRunAt: '2026-03-04T10:01:00.000Z' },
+          {
+            sourceId: 'source-a',
+            nextRunAt: '2026-03-04T10:00:00.000Z',
+            scheduleType: 'interval',
+            intervalMinutes: 5,
+          },
+          {
+            sourceId: 'source-b',
+            nextRunAt: '2026-03-04T10:01:00.000Z',
+            scheduleType: 'interval',
+            intervalMinutes: 5,
+          },
         ],
         nextToken: null,
       },
@@ -122,6 +207,14 @@ describe('scheduler handler', () => {
         limit: 10,
         nextToken: undefined,
         now: '2026-03-04T10:00:00.000Z',
+      },
+    ]);
+    expect(repository.reserveCalls).toEqual([
+      {
+        sourceId: 'source-a',
+        expectedNextRunAt: '2026-03-04T10:00:00.000Z',
+        nextRunAt: '2026-03-04T10:05:00.000Z',
+        reservedAt: '2026-03-04T10:00:00.000Z',
       },
     ]);
     expect(result.generatedAt).toBe('2026-03-04T10:00:00.000Z');

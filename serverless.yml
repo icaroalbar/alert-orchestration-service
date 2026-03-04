@@ -100,6 +100,14 @@ custom:
       region: us-east-1
       logRetentionInDays: 7
       tracing: false
+      schedulerMemorySize: 256
+      schedulerTimeoutSeconds: 45
+      collectorMemorySize: 512
+      collectorTimeoutSeconds: 90
+      consumerMemorySize: 256
+      consumerTimeoutSeconds: 45
+      sourceRegistryApiMemorySize: 256
+      sourceRegistryApiTimeoutSeconds: 20
       sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_DEV, 'https://auth.dev.alert-orchestration.internal'}
       sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_DEV, 'alert-orchestration-service-dev-source-registry-api'}
       sourcesTableName: ${self:service}-dev-sources
@@ -129,14 +137,22 @@ custom:
       orchestrationFailureAlarmThreshold: 1
       orchestrationTimeoutAlarmThreshold: 1
       orchestrationDurationP95AlarmThresholdMs: 300000
-      salesforceQueueMaxReceiveCount: 5
-      hubspotQueueMaxReceiveCount: 5
+      salesforceQueueMaxReceiveCount: 3
+      hubspotQueueMaxReceiveCount: 3
       mapMaxConcurrency: 2
       orchestrationScheduleExpression: cron(0/30 * * * ? *)
     stg:
       region: us-east-1
       logRetentionInDays: 14
       tracing: true
+      schedulerMemorySize: 256
+      schedulerTimeoutSeconds: 45
+      collectorMemorySize: 768
+      collectorTimeoutSeconds: 90
+      consumerMemorySize: 384
+      consumerTimeoutSeconds: 45
+      sourceRegistryApiMemorySize: 256
+      sourceRegistryApiTimeoutSeconds: 20
       sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_STG, 'https://auth.stg.alert-orchestration.internal'}
       sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_STG, 'alert-orchestration-service-stg-source-registry-api'}
       sourcesTableName: ${self:service}-stg-sources
@@ -174,6 +190,14 @@ custom:
       region: us-east-1
       logRetentionInDays: 30
       tracing: true
+      schedulerMemorySize: 384
+      schedulerTimeoutSeconds: 60
+      collectorMemorySize: 1024
+      collectorTimeoutSeconds: 120
+      consumerMemorySize: 512
+      consumerTimeoutSeconds: 60
+      sourceRegistryApiMemorySize: 384
+      sourceRegistryApiTimeoutSeconds: 25
       sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_PROD, 'https://auth.alert-orchestration.internal'}
       sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_PROD, 'alert-orchestration-service-prod-source-registry-api'}
       sourcesTableName: ${self:service}-prod-sources
@@ -203,8 +227,8 @@ custom:
       orchestrationFailureAlarmThreshold: 2
       orchestrationTimeoutAlarmThreshold: 1
       orchestrationDurationP95AlarmThresholdMs: 420000
-      salesforceQueueMaxReceiveCount: 5
-      hubspotQueueMaxReceiveCount: 5
+      salesforceQueueMaxReceiveCount: 8
+      hubspotQueueMaxReceiveCount: 8
       mapMaxConcurrency: 10
       orchestrationScheduleExpression: cron(0/5 * * * ? *)
 
@@ -216,8 +240,8 @@ functions:
     name: ${self:custom.naming.schedulerFunctionName}
     handler: dist/handlers/scheduler.handler
     description: Lista fontes elegiveis para processamento incremental.
-    memorySize: 256
-    timeout: 30
+    memorySize: ${self:custom.stages.${self:provider.stage}.schedulerMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.schedulerTimeoutSeconds}
     role:
       Fn::GetAtt:
         - SchedulerExecutionRole
@@ -226,8 +250,8 @@ functions:
     name: ${self:custom.naming.prefix}-collector
     handler: dist/handlers/collector.handler
     description: Coletora generica acionada por sourceId em cada iteracao do Map State.
-    memorySize: 512
-    timeout: 60
+    memorySize: ${self:custom.stages.${self:provider.stage}.collectorMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.collectorTimeoutSeconds}
     role:
       Fn::GetAtt:
         - CollectorExecutionRole
@@ -236,8 +260,8 @@ functions:
     name: ${self:custom.naming.salesforceConsumerFunctionName}
     handler: dist/handlers/salesforce-consumer.handler
     description: Consumidora dedicada para entrega de eventos de clientes na integracao Salesforce.
-    memorySize: 256
-    timeout: 30
+    memorySize: ${self:custom.stages.${self:provider.stage}.consumerMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.consumerTimeoutSeconds}
     role:
       Fn::GetAtt:
         - SalesforceConsumerExecutionRole
@@ -257,8 +281,8 @@ functions:
     name: ${self:custom.naming.hubspotConsumerFunctionName}
     handler: dist/handlers/hubspot-consumer.handler
     description: Consumidora dedicada para entrega de eventos de clientes na integracao HubSpot.
-    memorySize: 256
-    timeout: 30
+    memorySize: ${self:custom.stages.${self:provider.stage}.consumerMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.consumerTimeoutSeconds}
     role:
       Fn::GetAtt:
         - HubspotConsumerExecutionRole
@@ -278,8 +302,8 @@ functions:
     name: ${self:custom.naming.createSourceFunctionName}
     handler: dist/handlers/create-source.handler
     description: Endpoint POST para registro de novas fontes no plugin registry.
-    memorySize: 256
-    timeout: 30
+    memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}
     role:
       Fn::GetAtt:
         - SourceRegistryApiExecutionRole
@@ -296,8 +320,8 @@ functions:
     name: ${self:custom.naming.updateSourceFunctionName}
     handler: dist/handlers/update-source.handler
     description: Endpoint PATCH para atualizacao parcial de fontes no plugin registry.
-    memorySize: 256
-    timeout: 30
+    memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}
     role:
       Fn::GetAtt:
         - SourceRegistryApiExecutionRole
@@ -314,8 +338,8 @@ functions:
     name: ${self:custom.naming.deleteSourceFunctionName}
     handler: dist/handlers/delete-source.handler
     description: Endpoint DELETE para desativacao logica de fontes no plugin registry.
-    memorySize: 256
-    timeout: 30
+    memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}
     role:
       Fn::GetAtt:
         - SourceRegistryApiExecutionRole
@@ -332,8 +356,8 @@ functions:
     name: ${self:custom.naming.listSourceFunctionName}
     handler: dist/handlers/list-sources.handler
     description: Endpoint GET para listagem paginada de fontes no plugin registry.
-    memorySize: 256
-    timeout: 30
+    memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}
     role:
       Fn::GetAtt:
         - SourceRegistryApiExecutionRole

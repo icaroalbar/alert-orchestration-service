@@ -67,7 +67,11 @@ Payload esperado na execução:
   - falha: `sourceId`, `status=FAILED`, `error`, `cause`.
 - Controle de paralelismo:
   - `MaxConcurrencyPath = $.schedulerResult.maxConcurrency`.
-  - Valor configurado por stage via `MAP_MAX_CONCURRENCY`.
+  - Valor configurado por stage via `custom.stages.<stage>.mapMaxConcurrency`:
+    - `dev=2`
+    - `stg=5`
+    - `prod=10`
+  - O valor é injetado em runtime no Scheduler por `MAP_MAX_CONCURRENCY` e pode ser ajustado sem alteração de código-fonte (ex.: variável de ambiente no deploy/pipeline).
 
 ### BuildExecutionOutput (Pass)
 

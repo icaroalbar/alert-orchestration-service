@@ -43,6 +43,7 @@ Payload esperado na execução:
     - `IntervalSeconds: 5`
     - `MaxAttempts: 2`
     - `BackoffRate: 2`
+  - Política limitada: número de tentativas é finito (`MaxAttempts`) para evitar loop infinito.
 - Saída esperada em `schedulerResult`:
   - `contractVersion` (`scheduler-output.v1`)
   - `sourceIds` (array de string)
@@ -58,6 +59,7 @@ Payload esperado na execução:
 - Entrada: `schedulerResult.sourceIds` e `schedulerResult.maxConcurrency`.
 - Ação: itera cada `sourceId` e invoca `CollectorLambdaFunction`.
 - Retry com backoff exponencial na task `InvokeCollector` com os mesmos limites do `Scheduler`.
+- Política limitada também no coletor (`MaxAttempts` finito), com `Catch` por item para manter tolerância a falha parcial.
 - Catch por item no `InvokeCollector` (`States.ALL`) para registrar falha da fonte sem interromper o `Map`.
 - Publica métricas customizadas por item usando `cloudwatch:PutMetricData` (não bloqueante):
   - `SourceProcessed` / `SourceFailed` (dimensão `Stage`);

@@ -484,4 +484,42 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(summary.schedulerStatus).toBe('SUCCEEDED');
     expect(summary.maxConcurrency).toBe(5);
   });
+
+  it('define retries com backoff exponencial e tentativas limitadas nas tasks críticas', () => {
+    const definition = loadDefinition();
+    const states = asObject(definition.States);
+    const scheduler = asObject(states.Scheduler);
+    const processEligibleSources = asObject(states.ProcessEligibleSources);
+    const iteratorStates = asObject(asObject(processEligibleSources.Iterator).States);
+    const invokeCollector = asObject(iteratorStates.InvokeCollector);
+
+    const retryGroups = [
+      {
+        stateName: 'Scheduler',
+        entries: asArray(scheduler.Retry),
+      },
+      {
+        stateName: 'InvokeCollector',
+        entries: asArray(invokeCollector.Retry),
+      },
+    ];
+
+    for (const group of retryGroups) {
+      expect(group.entries.length).toBeGreaterThan(0);
+
+      for (const entry of group.entries) {
+        const retry = asObject(entry);
+        expect(Number(retry.IntervalSeconds)).toBeGreaterThanOrEqual(1);
+        expect(Number(retry.MaxAttempts)).toBeGreaterThanOrEqual(1);
+        expect(Number(retry.BackoffRate)).toBeGreaterThanOrEqual(1);
+      }
+
+      const hasFiniteCeiling = group.entries.some((entry) => Number(asObject(entry).MaxAttempts) < 10);
+      expect(hasFiniteCeiling).toBe(true);
+      const hasExponentialBackoff = group.entries.some(
+        (entry) => Number(asObject(entry).BackoffRate) > 1,
+      );
+      expect(hasExponentialBackoff).toBe(true);
+    }
+  });
 });

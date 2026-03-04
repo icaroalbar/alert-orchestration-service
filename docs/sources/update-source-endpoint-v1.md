@@ -23,7 +23,6 @@ Atualizar parcialmente uma fonte já cadastrada no plugin registry, preservando 
 - `scheduleType`
 - `intervalMinutes`
 - `cronExpr`
-- `nextRunAt`
 
 ## Campos imutáveis
 
@@ -34,6 +33,12 @@ Atualizar parcialmente uma fonte já cadastrada no plugin registry, preservando 
 - `updatedAt`
 
 Se o payload incluir campos imutáveis ou desconhecidos, a API retorna `400`.
+
+## Regras de agenda (`nextRunAt`)
+
+- `nextRunAt` é controlado pelo backend e não pode ser enviado no PATCH.
+- Quando `scheduleType`, `intervalMinutes` ou `cronExpr` mudam, o backend recalcula `nextRunAt` em UTC.
+- Quando não há mudança de agenda, `nextRunAt` é preservado.
 
 ## Controle de versão
 

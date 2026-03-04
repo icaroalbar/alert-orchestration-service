@@ -8,7 +8,7 @@ Endpoint para cadastro de novas fontes no plugin registry.
 - Path: `/sources`
 - Header obrigatório: `Authorization: Bearer <jwt>`
 - Scope obrigatório: `sources:write`
-- Body: contrato `SourceSchemaV1` (ver `docs/sources/source-schema-v1.md`).
+- Body: contrato de criação baseado em `SourceSchemaV1` (ver `docs/sources/source-schema-v1.md`), com `nextRunAt` calculado automaticamente no backend.
 
 ## Responses
 
@@ -29,6 +29,8 @@ Endpoint para cadastro de novas fontes no plugin registry.
 ### `400 Bad Request`
 
 Body ausente, JSON inválido ou payload inválido conforme regras de `SourceSchemaV1` (campos obrigatórios, formatos e condicionais).
+
+`cronExpr` inválido também retorna `400` com erro estruturado no campo `cronExpr`.
 
 ### `401 Unauthorized`
 

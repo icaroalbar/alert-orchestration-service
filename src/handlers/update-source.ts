@@ -3,10 +3,13 @@ import {
   type SourceRegistryRepository,
 } from '../domain/sources/source-registry-repository';
 import {
+  hasSourceScheduleChanged,
   mergeAndValidateSourcePatch,
+  resolveSourceSchedule,
   SOURCE_PAYLOAD_VALIDATION_MESSAGE,
   validateSourcePatchPayload,
 } from '../domain/sources/source-payload-validation';
+import { calculateNextRunAt } from '../domain/sources/next-run-at';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
 import { nowIso } from '../shared/time/now-iso';
 
@@ -136,7 +139,27 @@ export const createHandler =
     }
 
     const nextUpdatedAt = now();
-    const merged = mergeAndValidateSourcePatch(current, patchValidation.value, nextUpdatedAt);
+    const nextSchedule = resolveSourceSchedule(current, patchValidation.value);
+    const shouldRecalculateNextRunAt = hasSourceScheduleChanged(current, nextSchedule);
+    const nextRunAt = shouldRecalculateNextRunAt
+      ? calculateNextRunAt(nextSchedule, nextUpdatedAt)
+      : {
+          success: true as const,
+          value: current.nextRunAt,
+        };
+    if (!nextRunAt.success) {
+      return response(400, {
+        message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+        errors: nextRunAt.errors,
+      });
+    }
+
+    const merged = mergeAndValidateSourcePatch(
+      current,
+      patchValidation.value,
+      nextUpdatedAt,
+      nextRunAt.value,
+    );
     if (!merged.success) {
       return response(400, {
         message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,

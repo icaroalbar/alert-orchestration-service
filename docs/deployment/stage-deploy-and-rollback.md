@@ -17,6 +17,17 @@ Cada environment (`dev`, `stg`, `prod`) deve conter:
 - `AWS_DEPLOY_ROLE_ARN` (secret): role assumida por OIDC para deploy.
 - `SERVERLESS_ACCESS_KEY` (secret): autenticacao do Serverless Framework v4.
 - `AWS_REGION` (variable opcional): default `us-east-1`.
+- `SECRETS_ALLOWED_ACCOUNT_ID_<STAGE>` (variable): conta AWS permitida para `secretArn` de fontes.
+  - `SECRETS_ALLOWED_ACCOUNT_ID_DEV`
+  - `SECRETS_ALLOWED_ACCOUNT_ID_STG`
+  - `SECRETS_ALLOWED_ACCOUNT_ID_PROD`
+
+No runtime, a politica efetiva e exposta via:
+
+- `SECRETS_ALLOWED_REGION`
+- `SECRETS_ALLOWED_ACCOUNT_ID`
+
+Com isso, `POST/PATCH /sources` e `collector` rejeitam `secretArn` incompativel com stage.
 
 ## Fluxo de promocao recomendado
 

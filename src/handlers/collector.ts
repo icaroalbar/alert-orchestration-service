@@ -58,6 +58,10 @@ import {
   withTelemetrySpan,
   type TelemetryTraceContext,
 } from '../shared/observability/open-telemetry';
+import {
+  resolveSecretArnStagePolicy,
+  validateSecretArnAgainstStagePolicy,
+} from '../shared/security/secret-arn-stage-policy';
 import { nowIso } from '../shared/time/now-iso';
 
 const COLLECTOR_SECRET_RETRY_MAX_ATTEMPTS_DEFAULT = 3;
@@ -799,6 +803,20 @@ export const createHandler =
           const tenantId = eventTenantId || sourceConfiguration.tenantId;
           resolvedTenantId = tenantId;
           span.setAttribute('tenantId', tenantId);
+          const secretArnPolicyValidation = validateSecretArnAgainstStagePolicy({
+            secretArn: sourceConfiguration.secretArn,
+            policy: resolveSecretArnStagePolicy(),
+          });
+          if (!secretArnPolicyValidation.success) {
+            logger.info('collector.secret_arn.rejected', {
+              sourceId,
+              tenantId,
+              reason: secretArnPolicyValidation.reason,
+            });
+            throw new Error(
+              `Secret ARN policy rejected source "${sourceId}": ${secretArnPolicyValidation.reason}`,
+            );
+          }
 
           const cursorSnapshot = await runInChildSpan(
             {

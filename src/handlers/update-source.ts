@@ -19,6 +19,10 @@ import {
   toTelemetryLogContext,
   withTelemetrySpan,
 } from '../shared/observability/open-telemetry';
+import {
+  resolveSecretArnStagePolicy,
+  validateSecretArnAgainstStagePolicy,
+} from '../shared/security/secret-arn-stage-policy';
 import { nowIso } from '../shared/time/now-iso';
 
 const JSON_HEADERS = {
@@ -261,6 +265,22 @@ export const createHandler =
           return response(400, {
             message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
             errors: merged.errors,
+          });
+        }
+        const secretArnPolicyValidation = validateSecretArnAgainstStagePolicy({
+          secretArn: merged.value.secretArn,
+          policy: resolveSecretArnStagePolicy(),
+        });
+        if (!secretArnPolicyValidation.success) {
+          logger.info('api.sources.update.rejected', {
+            correlationId,
+            statusCode: 400,
+            sourceId: sourceId.value,
+            reason: 'secret_arn_stage_mismatch',
+          });
+          return response(400, {
+            message: secretArnPolicyValidation.reason,
+            code: 'SECRET_ARN_STAGE_MISMATCH',
           });
         }
 

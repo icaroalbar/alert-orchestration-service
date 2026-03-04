@@ -1,7 +1,13 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 describe('hubspot-consumer handler', () => {
   const originalEnv = process.env;
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    global.fetch = originalFetch;
+  });
 
   it('fails when target URL env var is missing', async () => {
     jest.resetModules();
@@ -20,6 +26,12 @@ describe('hubspot-consumer handler', () => {
       ...originalEnv,
       HUBSPOT_INTEGRATION_TARGET_BASE_URL: 'https://hubspot.internal',
     };
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        status: 202,
+        text: () => Promise.resolve('accepted'),
+      }),
+    ) as never;
 
     const module = await import('../../../src/handlers/hubspot-consumer');
     await expect(

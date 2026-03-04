@@ -17,6 +17,52 @@ A base do serviço é **TypeScript obrigatório**.
 - Logging operacional padronizado em JSON via `src/shared/logging/structured-logger.ts`.
 - Correlação em handlers HTTP prioriza header `x-correlation-id` com fallback para `requestId`.
 
+## Arquitetura de referência
+
+Fluxo oficial da ingestão:
+
+```text
+EventBridge (cron global)
+  -> Step Functions (orquestração principal)
+    -> Lambda Scheduler (lista fontes elegíveis)
+      -> Map State (MaxConcurrency por stage)
+        -> Lambda Coletora Genérica
+          -> API Banco Oficial (upsert-batch)
+            -> SNS (customer.persisted)
+              -> SQS por integração (+ DLQ)
+                -> Lambda Consumidora
+                  -> API Externa
+```
+
+Componentes-chave:
+
+- Orquestração central: `state-machines/main-orchestration-v1.asl.json`
+- Contrato de saída do scheduler: `docs/step-functions/scheduler-output-v1.md`
+- Contrato detalhado da orquestração: `docs/step-functions/main-orchestration-v1.md`
+- Repositório de fontes/plugin registry: `sources` (DynamoDB) + API (`/sources`)
+- Cursor incremental por fonte: `cursors` (DynamoDB)
+
+## Fluxo de ingestão ponta a ponta
+
+1. EventBridge agenda a execução da state machine por stage.
+2. Scheduler lista fontes ativas com `nextRunAt <= now`, reserva execução e retorna `sourceIds`.
+3. Map State processa cada `sourceId` até o limite de `maxConcurrency`.
+4. Coletora carrega configuração/segredo, executa query incremental e normaliza para modelo canônico.
+5. Lote válido é enviado para API oficial (`upsert-batch`) com idempotência por `sourceId + cursor + recordId`.
+6. Registros persistidos geram evento `customer.persisted` no SNS.
+7. Filas SQS por integração recebem fan-out; consumidores entregam para APIs externas.
+8. Falhas de entrega excedentes são roteadas para DLQ, com alarmes e reprocessamento manual.
+
+## Variáveis de ambiente essenciais
+
+- `SOURCES_TABLE_NAME`, `CURSORS_TABLE_NAME`, `IDEMPOTENCY_TABLE_NAME`
+- `CLIENT_EVENTS_TOPIC_ARN`, `OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL`
+- `MAP_MAX_CONCURRENCY`, `SCHEDULER_ACTIVE_SOURCES_PAGE_SIZE`
+- `COLLECTOR_DEFAULT_CURSOR`, `COLLECTOR_SECRET_RETRY_MAX_ATTEMPTS`, `COLLECTOR_SECRET_RETRY_BASE_DELAY_MS`, `COLLECTOR_SECRET_RETRY_BACKOFF_RATE`
+- `OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS`, `OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS`, `OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS`, `OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE`
+- `INTEGRATION_API_TIMEOUT_MS`, `SALESFORCE_INTEGRATION_TARGET_BASE_URL`, `HUBSPOT_INTEGRATION_TARGET_BASE_URL`
+- `SOURCE_REGISTRY_JWT_ISSUER_URL_<STAGE>`, `SOURCE_REGISTRY_JWT_AUDIENCE_<STAGE>`
+
 ## Scripts
 
 - `npm run lint`

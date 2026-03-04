@@ -1,4 +1,8 @@
-import { SOURCE_SCHEMA_VERSION, validateSourceSchemaV1 } from '../domain/sources/source-schema';
+import {
+  SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+  validateSourceCreatePayload,
+} from '../domain/sources/source-payload-validation';
+import { SOURCE_SCHEMA_VERSION } from '../domain/sources/source-schema';
 import {
   SourceAlreadyExistsError,
   type SourceRegistryRecord,
@@ -90,10 +94,10 @@ export const createHandler =
       return parsedBody.response;
     }
 
-    const validation = validateSourceSchemaV1(parsedBody.value);
+    const validation = validateSourceCreatePayload(parsedBody.value);
     if (!validation.success) {
-      return response(422, {
-        message: 'Source payload validation failed.',
+      return response(400, {
+        message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
         errors: validation.errors,
       });
     }

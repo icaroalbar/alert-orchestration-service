@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
+import type { CollectorCursorValue } from '../../../src/domain/collector/collector-cursor-repository';
 import type { MySqlQueryExecutor } from '../../../src/domain/collector/collect-mysql-records';
 import type { PostgresQueryExecutor } from '../../../src/domain/collector/collect-postgres-records';
 import {
@@ -63,6 +64,51 @@ class SpySecretRepository {
   }
 }
 
+class SpyCollectorCursorRepository {
+  public readonly getBySourceCalls: string[] = [];
+  public readonly saveCalls: Array<{
+    source: string;
+    last: CollectorCursorValue;
+    updatedAt: string;
+    expectedUpdatedAt?: string;
+  }> = [];
+
+  constructor(
+    private readonly cursorBySource: Map<
+      string,
+      {
+        source: string;
+        last: CollectorCursorValue;
+        updatedAt: string;
+      }
+    >,
+  ) {}
+
+  getBySource(source: string): Promise<{
+    source: string;
+    last: CollectorCursorValue;
+    updatedAt: string;
+  } | null> {
+    this.getBySourceCalls.push(source);
+    return Promise.resolve(this.cursorBySource.get(source) ?? null);
+  }
+
+  save(params: {
+    source: string;
+    last: CollectorCursorValue;
+    updatedAt: string;
+    expectedUpdatedAt?: string;
+  }): Promise<void> {
+    this.saveCalls.push(params);
+    this.cursorBySource.set(params.source, {
+      source: params.source,
+      last: params.last,
+      updatedAt: params.updatedAt,
+    });
+    return Promise.resolve();
+  }
+}
+
 class SpyPostgresQueryExecutorFactory {
   public readonly createCalls: CollectorSourceCredentials[] = [];
   public readonly queryCalls: Array<{ sql: string; values: readonly unknown[] }> = [];
@@ -115,12 +161,14 @@ const DEFAULT_SECRET_RETRY_POLICY: CollectorSecretRetryPolicy = {
 
 const createCollectorHandler = ({
   sourceRegistryRepository,
+  cursorRepository = new SpyCollectorCursorRepository(new Map()),
   secretRepository,
   postgresQueryExecutorFactory,
   mySqlQueryExecutorFactory = new SpyMySqlQueryExecutorFactory([]),
   logger,
 }: {
   sourceRegistryRepository: SpySourceRegistryRepository;
+  cursorRepository?: SpyCollectorCursorRepository;
   secretRepository: SpySecretRepository;
   postgresQueryExecutorFactory: SpyPostgresQueryExecutorFactory;
   mySqlQueryExecutorFactory?: SpyMySqlQueryExecutorFactory;
@@ -129,6 +177,7 @@ const createCollectorHandler = ({
   let nowMsCalls = 0;
   const dependencies: CollectorDependencies = {
     sourceRegistryRepository,
+    cursorRepository,
     secretRepository,
     postgresQueryExecutorFactory: postgresQueryExecutorFactory.create,
     mySqlQueryExecutorFactory: mySqlQueryExecutorFactory.create,
@@ -147,9 +196,21 @@ const createCollectorHandler = ({
 };
 
 describe('collector handler', () => {
-  it('loads source config, runs postgres incremental query and returns standardized result', async () => {
+  it('loads source config, uses persisted cursor and updates cursor with max collected value', async () => {
     const repository = new SpySourceRegistryRepository(
       new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
+    );
+    const cursorRepository = new SpyCollectorCursorRepository(
+      new Map([
+        [
+          VALID_SOURCE.sourceId,
+          {
+            source: VALID_SOURCE.sourceId,
+            last: '2026-03-04T09:59:00.000Z',
+            updatedAt: '2026-03-04T10:00:00.000Z',
+          },
+        ],
+      ]),
     );
     const secrets = new SpySecretRepository(
       new Map<string, string | null>([
@@ -181,6 +242,7 @@ describe('collector handler', () => {
 
     const handler = createCollectorHandler({
       sourceRegistryRepository: repository,
+      cursorRepository,
       secretRepository: secrets,
       postgresQueryExecutorFactory: postgresFactory,
       logger,
@@ -205,15 +267,32 @@ describe('collector handler', () => {
     ]);
 
     expect(repository.getByIdCalls).toEqual(['source-acme']);
+    expect(cursorRepository.getBySourceCalls).toEqual(['source-acme']);
+    expect(cursorRepository.saveCalls).toEqual([
+      {
+        source: 'source-acme',
+        last: '2026-03-04T10:20:00.000Z',
+        updatedAt: '2026-03-04T11:00:00.000Z',
+        expectedUpdatedAt: '2026-03-04T10:00:00.000Z',
+      },
+    ]);
     expect(secrets.getSecretValueCalls).toEqual([VALID_SOURCE.secretArn]);
     expect(postgresFactory.createCalls).toHaveLength(1);
     expect(postgresFactory.queryCalls).toEqual([
       {
         sql: 'select * from customers where updated_at > $1',
-        values: ['2026-03-01T00:00:00.000Z'],
+        values: ['2026-03-04T09:59:00.000Z'],
       },
     ]);
     expect(logger.infoCalls).toEqual([
+      [
+        'collector.cursor.loaded',
+        {
+          sourceId: 'source-acme',
+          hasPersistedCursor: true,
+          persistedCursor: '2026-03-04T09:59:00.000Z',
+        },
+      ],
       [
         'collector.source_credentials.loaded',
         {
@@ -228,8 +307,17 @@ describe('collector handler', () => {
         {
           sourceId: 'source-acme',
           engine: 'postgres',
-          cursor: '2026-03-01T00:00:00.000Z',
+          cursor: '2026-03-04T09:59:00.000Z',
           recordsCollected: 2,
+        },
+      ],
+      [
+        'collector.cursor.updated',
+        {
+          sourceId: 'source-acme',
+          previousCursor: '2026-03-04T09:59:00.000Z',
+          nextCursor: '2026-03-04T10:20:00.000Z',
+          conflictRetries: 0,
         },
       ],
     ]);
@@ -308,8 +396,21 @@ describe('collector handler', () => {
       ]),
     );
     const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+    const cursorRepository = new SpyCollectorCursorRepository(
+      new Map([
+        [
+          VALID_SOURCE.sourceId,
+          {
+            source: VALID_SOURCE.sourceId,
+            last: '2026-03-04T08:00:00.000Z',
+            updatedAt: '2026-03-04T08:30:00.000Z',
+          },
+        ],
+      ]),
+    );
     const handler = createCollectorHandler({
       sourceRegistryRepository: repository,
+      cursorRepository,
       secretRepository: secrets,
       postgresQueryExecutorFactory: postgresFactory,
     });
@@ -325,6 +426,58 @@ describe('collector handler', () => {
         values: ['2026-03-04T09:00:00.000Z'],
       },
     ]);
+    expect(cursorRepository.saveCalls).toEqual([]);
+  });
+
+  it('supports first run without persisted cursor and avoids update when no cursor value is found', async () => {
+    const sourceWithoutCursorFieldInResults: SourceRegistryRecord = {
+      ...VALID_SOURCE,
+      sourceId: 'source-no-cursor',
+      cursorField: 'cursor_col',
+    };
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([
+        [sourceWithoutCursorFieldInResults.sourceId, sourceWithoutCursorFieldInResults],
+      ]),
+    );
+    const cursorRepository = new SpyCollectorCursorRepository(new Map());
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          sourceWithoutCursorFieldInResults.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        customer_id: 10,
+        email: 'first@example.com',
+      },
+    ]);
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      cursorRepository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+    });
+
+    await handler({ sourceId: sourceWithoutCursorFieldInResults.sourceId });
+
+    expect(postgresFactory.queryCalls).toEqual([
+      {
+        sql: 'select * from customers where updated_at > $1',
+        values: ['2026-03-01T00:00:00.000Z'],
+      },
+    ]);
+    expect(cursorRepository.saveCalls).toEqual([]);
   });
 
   it('throws when sourceId is missing', async () => {

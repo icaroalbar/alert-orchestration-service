@@ -100,7 +100,9 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Limites aceitos em runtime: inteiro entre `1` e `40`.
   - Fallback no scheduler quando ausente: `5`.
 - Coletora SQL (Postgres/MySQL) com pool controlado e cursor incremental:
-  - `COLLECTOR_DEFAULT_CURSOR` (fallback inicial quando o evento não envia cursor).
+  - `COLLECTOR_DEFAULT_CURSOR` (fallback inicial quando não existe cursor no evento nem na tabela `cursors`).
+  - Precedência do cursor de execução: `event.cursor` > `cursors.last` > `COLLECTOR_DEFAULT_CURSOR`.
+  - Atualização do cursor após sucesso da coleta com controle otimista por `updatedAt` (evita regressão em concorrência).
   - `COLLECTOR_POSTGRES_POOL_MAX_CONNECTIONS` (default `5`).
   - `COLLECTOR_POSTGRES_POOL_IDLE_TIMEOUT_MS` (default `10000`).
   - `COLLECTOR_POSTGRES_POOL_CONNECTION_TIMEOUT_MS` (default `5000`).

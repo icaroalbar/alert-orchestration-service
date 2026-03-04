@@ -39,6 +39,7 @@ export interface CreateIntegrationConsumerHandlerParams {
 export interface IntegrationConsumerPayload {
   eventType: 'customer.persisted';
   sourceId: string;
+  tenantId: string;
   correlationId: string;
   publishedAt: string;
   customer: Record<string, unknown>;
@@ -103,6 +104,7 @@ const parseConsumerPayload = (rawBody: string): IntegrationConsumerPayload => {
 
   const eventType = parsed.eventType;
   const sourceId = parsed.sourceId;
+  const tenantId = parsed.tenantId;
   const correlationId = parsed.correlationId;
   const publishedAt = parsed.publishedAt;
   const customer = parsed.customer;
@@ -112,6 +114,9 @@ const parseConsumerPayload = (rawBody: string): IntegrationConsumerPayload => {
   }
   if (!isNonEmptyString(sourceId)) {
     throw new Error('missing_source_id');
+  }
+  if (!isNonEmptyString(tenantId)) {
+    throw new Error('missing_tenant_id');
   }
   if (!isNonEmptyString(correlationId)) {
     throw new Error('missing_correlation_id');
@@ -126,6 +131,7 @@ const parseConsumerPayload = (rawBody: string): IntegrationConsumerPayload => {
   return {
     eventType,
     sourceId: sourceId.trim(),
+    tenantId: tenantId.trim(),
     correlationId: correlationId.trim(),
     publishedAt: publishedAt.trim(),
     customer,

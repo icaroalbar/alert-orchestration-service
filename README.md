@@ -205,10 +205,12 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - `dynamodb:UpdateItem` apenas na tabela `sources`.
   - `logs:CreateLogStream` e `logs:PutLogEvents` apenas no log group `/aws/lambda/${service}-${stage}-scheduler`.
 - A state machine principal usa role dedicada (`${service}-${stage}-state-machine-role`) com permissão apenas de `lambda:InvokeFunction` na Lambda scheduler.
+- A role da state machine principal invoca Lambdas explicitamente por ARN de função (sem wildcard de versão/alias) para reduzir escopo.
 - Roles reservadas para etapas seguintes já provisionadas com escopo mínimo e recursos explícitos:
   - `collector-role` para leitura de config (`sources`), leitura de segredos (`secretsmanager:GetSecretValue`), atualização de cursor (`cursors`) e `sns:Publish` no tópico de eventos.
   - `salesforce-consumer-role` para consumo da fila `SalesforceIntegrationQueue`.
   - `hubspot-consumer-role` para consumo da fila `HubspotIntegrationQueue`.
+- Revisão formal de IAM mínima (inventário de wildcards e justificativas): `docs/security/iam-review-2026-03-04.md`.
 - ARNs das roles exportados via outputs para reuso em stacks/funções futuras:
   - `SchedulerExecutionRoleArn`
   - `MainStateMachineExecutionRoleArn`

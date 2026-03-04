@@ -485,7 +485,6 @@ resources:
                     - Fn::GetAtt:
                         - SchedulerLambdaFunction
                         - Arn
-                    - Fn::Sub: ${SchedulerLambdaFunction.Arn}:*
                 - Sid: InvokeCollectorLambda
                   Effect: Allow
                   Action:
@@ -494,7 +493,6 @@ resources:
                     - Fn::GetAtt:
                         - CollectorLambdaFunction
                         - Arn
-                    - Fn::Sub: ${CollectorLambdaFunction.Arn}:*
                 - Sid: DeliverStepFunctionsExecutionLogs
                   Effect: Allow
                   Action:
@@ -537,7 +535,6 @@ resources:
                   Effect: Allow
                   Action:
                     - dynamodb:GetItem
-                    - dynamodb:Query
                   Resource:
                     - Fn::GetAtt:
                         - SourcesTable

@@ -4,10 +4,15 @@ import {
 } from '../domain/collector/collect-mysql-records';
 import {
   collectPostgresRecords,
-  type CollectorCursorValue,
   type CollectorStandardizedRecord,
   type PostgresQueryExecutor,
 } from '../domain/collector/collect-postgres-records';
+import {
+  CollectorCursorConflictError,
+  type CollectorCursorRecord,
+  type CollectorCursorRepository,
+  type CollectorCursorValue,
+} from '../domain/collector/collector-cursor-repository';
 import {
   loadCollectorSourceCredentials,
   type CollectorSecretRepository,
@@ -20,6 +25,7 @@ import {
 } from '../domain/collector/load-source-configuration';
 import { createMySqlQueryExecutorFactory } from '../infra/collector/mysql-query-executor';
 import { createPostgresQueryExecutorFactory } from '../infra/collector/postgres-query-executor';
+import { createDynamoDbCollectorCursorRepository } from '../infra/cursors/dynamodb-collector-cursor-repository';
 import { createSecretsManagerSecretRepository } from '../infra/secrets/secrets-manager-secret-repository';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
 import { nowIso } from '../shared/time/now-iso';
@@ -55,6 +61,8 @@ const COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_DEFAULT = 5_000;
 const COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_MIN = 100;
 const COLLECTOR_MYSQL_QUERY_TIMEOUT_MS_MAX = 120_000;
 const COLLECTOR_DEFAULT_CURSOR_FALLBACK = '1970-01-01T00:00:00.000Z';
+const COLLECTOR_CURSOR_UPDATE_MAX_CONFLICT_RETRIES = 3;
+const NUMERIC_CURSOR_REGEX = /^[-+]?\d+(\.\d+)?$/;
 
 type PostgresQueryExecutorFactory = (credentials: CollectorSourceCredentials) => PostgresQueryExecutor;
 type MySqlQueryExecutorFactory = (credentials: CollectorSourceCredentials) => MySqlQueryExecutor;
@@ -77,6 +85,7 @@ export interface CollectorResult {
 
 export interface CollectorDependencies {
   sourceRegistryRepository: CollectorSourceConfigurationRepository;
+  cursorRepository: CollectorCursorRepository;
   secretRepository: CollectorSecretRepository;
   postgresQueryExecutorFactory: PostgresQueryExecutorFactory;
   mySqlQueryExecutorFactory: MySqlQueryExecutorFactory;
@@ -241,6 +250,7 @@ const resolveDefaultCursorValue = (rawValue: string | undefined): string => {
 
 const resolveCursorValue = (
   eventCursor: CollectorEvent['cursor'],
+  persistedCursor: CollectorCursorValue | undefined,
   defaultCursorValue: string,
 ): CollectorCursorValue => {
   if (typeof eventCursor === 'string') {
@@ -248,15 +258,157 @@ const resolveCursorValue = (
     if (normalized.length > 0) {
       return normalized;
     }
-
-    return defaultCursorValue;
   }
 
   if (typeof eventCursor === 'number' && Number.isFinite(eventCursor)) {
     return eventCursor;
   }
 
+  if (typeof persistedCursor === 'string') {
+    const normalized = persistedCursor.trim();
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  }
+
+  if (typeof persistedCursor === 'number' && Number.isFinite(persistedCursor)) {
+    return persistedCursor;
+  }
+
   return defaultCursorValue;
+};
+
+const toNumericCursor = (value: CollectorCursorValue): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  const normalized = value.trim();
+  if (!NUMERIC_CURSOR_REGEX.test(normalized)) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const compareCursorValues = (left: CollectorCursorValue, right: CollectorCursorValue): number => {
+  const leftNumeric = toNumericCursor(left);
+  const rightNumeric = toNumericCursor(right);
+
+  if (leftNumeric !== null && rightNumeric !== null) {
+    return leftNumeric === rightNumeric ? 0 : leftNumeric > rightNumeric ? 1 : -1;
+  }
+
+  const leftString = String(left);
+  const rightString = String(right);
+  return leftString.localeCompare(rightString);
+};
+
+const extractCursorValue = (value: unknown): CollectorCursorValue | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    if (!Number.isNaN(timestamp)) {
+      return value.toISOString();
+    }
+  }
+
+  return null;
+};
+
+const resolveLatestCursorFromRecords = ({
+  records,
+  cursorField,
+}: {
+  records: readonly CollectorStandardizedRecord[];
+  cursorField: string;
+}): CollectorCursorValue | null => {
+  let latestCursor: CollectorCursorValue | null = null;
+
+  for (const record of records) {
+    const candidate = extractCursorValue(record[cursorField]);
+    if (candidate === null) {
+      continue;
+    }
+
+    if (latestCursor === null || compareCursorValues(candidate, latestCursor) > 0) {
+      latestCursor = candidate;
+    }
+  }
+
+  return latestCursor;
+};
+
+const persistCollectorCursor = async ({
+  sourceId,
+  candidateCursor,
+  initialSnapshot,
+  cursorRepository,
+  updatedAt,
+  logger,
+}: {
+  sourceId: string;
+  candidateCursor: CollectorCursorValue;
+  initialSnapshot: CollectorCursorRecord | null;
+  cursorRepository: CollectorCursorRepository;
+  updatedAt: string;
+  logger: Pick<typeof console, 'info'>;
+}): Promise<void> => {
+  let snapshot = initialSnapshot;
+  let conflictRetries = 0;
+
+  for (;;) {
+    const persistedCursor = snapshot?.last;
+    if (
+      persistedCursor !== undefined &&
+      compareCursorValues(candidateCursor, persistedCursor) <= 0
+    ) {
+      logger.info('collector.cursor.update_skipped', {
+        sourceId,
+        reason: 'no-advance',
+        persistedCursor,
+        candidateCursor,
+      });
+      return;
+    }
+
+    try {
+      await cursorRepository.save({
+        source: sourceId,
+        last: candidateCursor,
+        updatedAt,
+        expectedUpdatedAt: snapshot?.updatedAt,
+      });
+
+      logger.info('collector.cursor.updated', {
+        sourceId,
+        previousCursor: persistedCursor ?? null,
+        nextCursor: candidateCursor,
+        conflictRetries,
+      });
+      return;
+    } catch (error) {
+      if (!(error instanceof CollectorCursorConflictError)) {
+        throw error;
+      }
+
+      conflictRetries += 1;
+      if (conflictRetries > COLLECTOR_CURSOR_UPDATE_MAX_CONFLICT_RETRIES) {
+        throw error;
+      }
+
+      snapshot = await cursorRepository.getBySource(sourceId);
+    }
+  }
 };
 
 const getDefaultDependencies = (): CollectorDependencies => {
@@ -269,8 +421,14 @@ const getDefaultDependencies = (): CollectorDependencies => {
     throw new Error('SOURCES_TABLE_NAME is required.');
   }
 
+  const cursorsTableName = process.env.CURSORS_TABLE_NAME;
+  if (!cursorsTableName || cursorsTableName.trim().length === 0) {
+    throw new Error('CURSORS_TABLE_NAME is required.');
+  }
+
   cachedDefaultDependencies = {
     sourceRegistryRepository: createDynamoDbSourceRegistryRepository({ tableName }),
+    cursorRepository: createDynamoDbCollectorCursorRepository({ tableName: cursorsTableName }),
     secretRepository: createSecretsManagerSecretRepository(),
     postgresQueryExecutorFactory: createPostgresQueryExecutorFactory({
       poolSettings: {
@@ -313,6 +471,7 @@ const getDefaultDependencies = (): CollectorDependencies => {
 export const createHandler =
   ({
     sourceRegistryRepository,
+    cursorRepository,
     secretRepository,
     postgresQueryExecutorFactory,
     mySqlQueryExecutorFactory,
@@ -334,6 +493,13 @@ export const createHandler =
       sourceRegistryRepository,
     });
 
+    const cursorSnapshot = await cursorRepository.getBySource(sourceId);
+    logger.info('collector.cursor.loaded', {
+      sourceId,
+      hasPersistedCursor: cursorSnapshot !== null,
+      persistedCursor: cursorSnapshot?.last ?? null,
+    });
+
     const loadedCredentials = await loadCollectorSourceCredentials({
       sourceId,
       engine: sourceConfiguration.engine,
@@ -351,7 +517,7 @@ export const createHandler =
       durationMs: loadedCredentials.metrics.durationMs,
     });
 
-    const cursor = resolveCursorValue(event?.cursor, defaultCursorValue);
+    const cursor = resolveCursorValue(event?.cursor, cursorSnapshot?.last, defaultCursorValue);
 
     let records: CollectorStandardizedRecord[];
     switch (sourceConfiguration.engine) {
@@ -384,9 +550,33 @@ export const createHandler =
       recordsCollected: records.length,
     });
 
+    const processedAt = now();
+    const candidateCursor = resolveLatestCursorFromRecords({
+      records,
+      cursorField: sourceConfiguration.cursorField,
+    });
+
+    if (candidateCursor === null) {
+      logger.info('collector.cursor.update_skipped', {
+        sourceId,
+        reason: 'no-cursor-value-found',
+        cursorField: sourceConfiguration.cursorField,
+        recordsCollected: records.length,
+      });
+    } else {
+      await persistCollectorCursor({
+        sourceId,
+        candidateCursor,
+        initialSnapshot: cursorSnapshot,
+        cursorRepository,
+        updatedAt: processedAt,
+        logger,
+      });
+    }
+
     return {
       sourceId,
-      processedAt: now(),
+      processedAt,
       recordsSent: records.length,
       records,
     };

@@ -92,6 +92,7 @@ jobs:
         run: npm ci
 
       - name: Validar segredos obrigatorios
+        id: secrets_check
         env:
           AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
@@ -106,20 +107,30 @@ jobs:
             missing=1
           fi
           if [ "$missing" -ne 0 ]; then
-            exit 1
+            echo "deploy_enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "deploy_enabled=true" >> "$GITHUB_OUTPUT"
 
       - name: Configurar credenciais AWS (OIDC)
+        if: steps.secrets_check.outputs.deploy_enabled == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
       - name: Validar render de stage
+        if: steps.secrets_check.outputs.deploy_enabled == 'true'
         run: npm run validate:stage-render
 
       - name: Deploy com Serverless
+        if: steps.secrets_check.outputs.deploy_enabled == 'true'
         env:
           STAGE: ${{ needs.resolve-target.outputs.stage }}
           SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
         run: npm run "sls:deploy:${STAGE}"
+
+      - name: Deploy pulado por segredo ausente
+        if: steps.secrets_check.outputs.deploy_enabled != 'true'
+        run: |
+          echo "::warning::Deploy ignorado: configurar AWS_DEPLOY_ROLE_ARN e SERVERLESS_ACCESS_KEY no environment alvo."

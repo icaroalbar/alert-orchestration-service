@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
+import type { PublishCommand } from '@aws-sdk/client-sns';
 
 import { createSnsCustomerEventsPublisher } from '../../../../src/infra/events/sns-customer-events-publisher';
 
@@ -16,6 +17,7 @@ describe('createSnsCustomerEventsPublisher', () => {
     const spySnsClient = new SpySnsClient();
     const publisher = createSnsCustomerEventsPublisher({
       topicArn: 'arn:aws:sns:us-east-1:123456789012:client-events',
+      integrationTargets: ['salesforce', 'hubspot'],
       snsClient: spySnsClient as never,
     });
 
@@ -31,12 +33,32 @@ describe('createSnsCustomerEventsPublisher', () => {
 
     expect(result).toEqual({ publishedCount: 2 });
     expect(spySnsClient.sendCalls).toHaveLength(2);
+
+    const firstCommand = spySnsClient.sendCalls[0] as PublishCommand;
+    expect(firstCommand.input.MessageAttributes).toEqual({
+      sourceId: {
+        DataType: 'String',
+        StringValue: 'source-acme',
+      },
+      correlationId: {
+        DataType: 'String',
+        StringValue: 'exec-123',
+      },
+      integrationTargets: {
+        DataType: 'String',
+        StringValue: 'salesforce,hubspot',
+      },
+    });
+
+    const firstMessage = JSON.parse(firstCommand.input.Message ?? '{}') as Record<string, unknown>;
+    expect(firstMessage.integrationTargets).toEqual(['salesforce', 'hubspot']);
   });
 
   it('does not publish when no persisted records are provided', async () => {
     const spySnsClient = new SpySnsClient();
     const publisher = createSnsCustomerEventsPublisher({
       topicArn: 'arn:aws:sns:us-east-1:123456789012:client-events',
+      integrationTargets: ['salesforce'],
       snsClient: spySnsClient as never,
     });
 
@@ -49,5 +71,15 @@ describe('createSnsCustomerEventsPublisher', () => {
 
     expect(result).toEqual({ publishedCount: 0 });
     expect(spySnsClient.sendCalls).toHaveLength(0);
+  });
+
+  it('rejects empty integration target configuration', () => {
+    expect(() =>
+      createSnsCustomerEventsPublisher({
+        topicArn: 'arn:aws:sns:us-east-1:123456789012:client-events',
+        integrationTargets: [],
+        snsClient: new SpySnsClient() as never,
+      }),
+    ).toThrow('integrationTargets must include at least one integration identifier.');
   });
 });

@@ -85,6 +85,7 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
 - Subscription SNS -> SQS explícita para fan-out em ambas as integrações:
   - `SalesforceIntegrationSubscription` conectando `ClientEventsTopic` em `SalesforceIntegrationQueue`.
   - `HubspotIntegrationSubscription` conectando `ClientEventsTopic` em `HubspotIntegrationQueue`.
+- Eventos `customer.persisted` publicados pela coletora carregam metadado `integrationTargets` no body e em `MessageAttributes` para rastreio operacional em triagem de DLQ.
 - Regra global do EventBridge para disparar a Step Functions principal por stage:
   - Nome da state machine: `${service}-${stage}-orchestration`
   - Nome da regra: `${service}-${stage}-orchestration-schedule`
@@ -145,6 +146,7 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - `Action: sqs:SendMessage`
   - `Condition: ArnEquals aws:SourceArn = ClientEventsTopic`
 - URLs e ARNs das filas expostos por outputs/exports e variáveis de ambiente:
+  - `INTEGRATION_TARGETS` (default `salesforce|hubspot`, também aceita vírgula) para versionar os destinos lógicos no payload publicado.
   - `SALESFORCE_INTEGRATION_QUEUE_URL`
   - `SALESFORCE_INTEGRATION_QUEUE_ARN`
   - `HUBSPOT_INTEGRATION_QUEUE_URL`

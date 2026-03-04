@@ -95,6 +95,8 @@ const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MAX = 5;
 const COLLECTOR_IDEMPOTENCY_TTL_SECONDS_DEFAULT = 604_800;
 const COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MIN = 60;
 const COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MAX = 2_592_000;
+const INTEGRATION_TARGETS_ENV = 'INTEGRATION_TARGETS';
+const INTEGRATION_TARGETS_DEFAULT = 'salesforce|hubspot';
 
 type PostgresQueryExecutorFactory = (credentials: CollectorSourceCredentials) => PostgresQueryExecutor;
 type MySqlQueryExecutorFactory = (credentials: CollectorSourceCredentials) => MySqlQueryExecutor;
@@ -346,6 +348,26 @@ const resolveCollectorIdempotencyTtlSeconds = (rawValue: string | undefined): nu
     max: COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MAX,
     fallback: COLLECTOR_IDEMPOTENCY_TTL_SECONDS_DEFAULT,
   });
+
+const resolveIntegrationTargets = (rawValue: string | undefined): string[] => {
+  const normalizedRaw = rawValue?.trim() || INTEGRATION_TARGETS_DEFAULT;
+  const targets = Array.from(
+    new Set(
+      normalizedRaw
+        .split(/[,|]/)
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0),
+    ),
+  );
+
+  if (targets.length === 0) {
+    throw new Error(
+      `${INTEGRATION_TARGETS_ENV} must include at least one integration identifier.`,
+    );
+  }
+
+  return targets;
+};
 
 const resolveCursorValue = (
   eventCursor: CollectorEvent['cursor'],
@@ -644,6 +666,7 @@ const getDefaultDependencies = (): CollectorDependencies => {
     }),
     customerEventsPublisher: createSnsCustomerEventsPublisher({
       topicArn: customerEventsTopicArn,
+      integrationTargets: resolveIntegrationTargets(process.env[INTEGRATION_TARGETS_ENV]),
     }),
     idempotencyRepository: createDynamoDbCollectorIdempotencyRepository({
       tableName: idempotencyTableName,

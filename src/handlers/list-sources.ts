@@ -5,6 +5,8 @@ import {
 } from '../domain/sources/source-registry-repository';
 import { SOURCE_ENGINES, type SourceEngine } from '../domain/sources/source-schema';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveCorrelationId } from '../shared/logging/correlation-id';
+import { createStructuredLogger } from '../shared/logging/structured-logger';
 
 const JSON_HEADERS = {
   'content-type': 'application/json',
@@ -15,6 +17,7 @@ const MIN_LIMIT = 1;
 const MAX_LIMIT = 100;
 
 export interface ListSourcesEvent {
+  headers?: Record<string, string | undefined>;
   queryStringParameters?: {
     limit?: string;
     nextToken?: string;
@@ -37,6 +40,9 @@ export interface ListSourcesDependencies {
 }
 
 let cachedDefaultDependencies: ListSourcesDependencies | undefined;
+const logger = createStructuredLogger({
+  component: 'api.sources.list',
+});
 
 const response = (statusCode: number, payload: unknown): ListSourcesResponse => ({
   statusCode,
@@ -196,25 +202,53 @@ const getDefaultDependencies = (): ListSourcesDependencies => {
 export const createHandler =
   ({ sourceRegistryRepository }: ListSourcesDependencies) =>
   async (event: ListSourcesEvent): Promise<ListSourcesResponse> => {
+    const correlationId = resolveCorrelationId({
+      headers: event.headers,
+      requestId: event.requestContext?.requestId,
+    });
+    logger.info('api.sources.list.received', {
+      correlationId,
+    });
+
     const query = event.queryStringParameters ?? {};
 
     const limit = parseLimit(query.limit);
     if (!limit.success) {
+      logger.info('api.sources.list.rejected', {
+        correlationId,
+        statusCode: limit.response.statusCode,
+        reason: 'invalid_limit',
+      });
       return limit.response;
     }
 
     const nextToken = parseNextToken(query.nextToken);
     if (!nextToken.success) {
+      logger.info('api.sources.list.rejected', {
+        correlationId,
+        statusCode: nextToken.response.statusCode,
+        reason: 'invalid_next_token',
+      });
       return nextToken.response;
     }
 
     const active = parseActive(query.active);
     if (!active.success) {
+      logger.info('api.sources.list.rejected', {
+        correlationId,
+        statusCode: active.response.statusCode,
+        reason: 'invalid_active',
+      });
       return active.response;
     }
 
     const engine = parseEngine(query.engine);
     if (!engine.success) {
+      logger.info('api.sources.list.rejected', {
+        correlationId,
+        statusCode: engine.response.statusCode,
+        reason: 'invalid_engine',
+      });
       return engine.response;
     }
 
@@ -227,6 +261,11 @@ export const createHandler =
 
     try {
       const result = await sourceRegistryRepository.list(params);
+      logger.info('api.sources.list.succeeded', {
+        correlationId,
+        statusCode: 200,
+        returnedItems: result.items.length,
+      });
       return response(200, {
         items: result.items,
         filters: {
@@ -241,12 +280,21 @@ export const createHandler =
       });
     } catch (error) {
       if (error instanceof SourcePaginationTokenError) {
+        logger.info('api.sources.list.rejected', {
+          correlationId,
+          statusCode: 400,
+          reason: 'invalid_pagination_token',
+        });
         return response(400, {
           message: error.message,
           code: 'INVALID_PAGINATION_TOKEN',
         });
       }
 
+      logger.info('api.sources.list.failed', {
+        correlationId,
+        statusCode: 500,
+      });
       return response(500, {
         message: 'Failed to list sources.',
       });

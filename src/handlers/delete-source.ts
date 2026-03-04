@@ -4,6 +4,8 @@ import {
   type SourceRegistryRepository,
 } from '../domain/sources/source-registry-repository';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveCorrelationId } from '../shared/logging/correlation-id';
+import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
 
 const JSON_HEADERS = {
@@ -11,8 +13,12 @@ const JSON_HEADERS = {
 };
 
 export interface DeleteSourceEvent {
+  headers?: Record<string, string | undefined>;
   pathParameters?: {
     id?: string;
+  };
+  requestContext?: {
+    requestId?: string;
   };
 }
 
@@ -28,6 +34,9 @@ export interface DeleteSourceDependencies {
 }
 
 let cachedDefaultDependencies: DeleteSourceDependencies | undefined;
+const logger = createStructuredLogger({
+  component: 'api.sources.delete',
+});
 
 const response = (statusCode: number, payload: unknown): DeleteSourceResponse => ({
   statusCode,
@@ -89,13 +98,31 @@ const deactivateSourceRecord = (
 export const createHandler =
   ({ sourceRegistryRepository, now }: DeleteSourceDependencies) =>
   async (event: DeleteSourceEvent): Promise<DeleteSourceResponse> => {
+    const correlationId = resolveCorrelationId({
+      headers: event.headers,
+      requestId: event.requestContext?.requestId,
+    });
+    logger.info('api.sources.delete.received', {
+      correlationId,
+    });
+
     const sourceId = parseSourceId(event.pathParameters?.id);
     if (!sourceId.success) {
+      logger.info('api.sources.delete.rejected', {
+        correlationId,
+        statusCode: sourceId.response.statusCode,
+        reason: 'missing_source_id',
+      });
       return sourceId.response;
     }
 
     const current = await sourceRegistryRepository.getById(sourceId.value);
     if (!current) {
+      logger.info('api.sources.delete.not_found', {
+        correlationId,
+        statusCode: 404,
+        sourceId: sourceId.value,
+      });
       return response(404, {
         message: `Source "${sourceId.value}" was not found.`,
         code: 'SOURCE_NOT_FOUND',
@@ -103,6 +130,11 @@ export const createHandler =
     }
 
     if (!current.active) {
+      logger.info('api.sources.delete.noop', {
+        correlationId,
+        statusCode: 204,
+        sourceId: sourceId.value,
+      });
       return noContent();
     }
 
@@ -113,11 +145,21 @@ export const createHandler =
         source: deactivatedSource,
         expectedUpdatedAt: current.updatedAt,
       });
+      logger.info('api.sources.delete.succeeded', {
+        correlationId,
+        statusCode: 204,
+        sourceId: current.sourceId,
+      });
       return noContent();
     } catch (error) {
       if (error instanceof SourceVersionConflictError) {
         const latest = await sourceRegistryRepository.getById(sourceId.value);
         if (!latest) {
+          logger.info('api.sources.delete.not_found', {
+            correlationId,
+            statusCode: 404,
+            sourceId: sourceId.value,
+          });
           return response(404, {
             message: `Source "${sourceId.value}" was not found.`,
             code: 'SOURCE_NOT_FOUND',
@@ -125,15 +167,30 @@ export const createHandler =
         }
 
         if (!latest.active) {
+          logger.info('api.sources.delete.noop', {
+            correlationId,
+            statusCode: 204,
+            sourceId: sourceId.value,
+          });
           return noContent();
         }
 
+        logger.info('api.sources.delete.conflict', {
+          correlationId,
+          statusCode: 409,
+          sourceId: sourceId.value,
+        });
         return response(409, {
           message: error.message,
           code: 'SOURCE_VERSION_CONFLICT',
         });
       }
 
+      logger.info('api.sources.delete.failed', {
+        correlationId,
+        statusCode: 500,
+        sourceId: sourceId.value,
+      });
       return response(500, {
         message: 'Failed to delete source.',
       });

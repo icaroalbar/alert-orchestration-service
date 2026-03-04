@@ -1,3 +1,5 @@
+import { createStructuredLogger } from '../../shared/logging/structured-logger';
+
 export interface IntegrationConsumerSqsRecord {
   messageId: string;
   body: string;
@@ -91,7 +93,9 @@ export const createIntegrationConsumerHandler = ({
   targetBaseUrl,
   processRecord = () => Promise.resolve(),
   classifyError = () => 'transient',
-  logger = console,
+  logger = createStructuredLogger({
+    component: 'integration-consumer',
+  }),
 }: CreateIntegrationConsumerHandlerParams) => {
   const normalizedIntegrationName = integrationName.trim();
   if (normalizedIntegrationName.length === 0) {
@@ -116,8 +120,9 @@ export const createIntegrationConsumerHandler = ({
 
     const batchItemFailures: Array<{ itemIdentifier: string }> = [];
     for (const record of records) {
+      let payload: IntegrationConsumerPayload | null = null;
       try {
-        const payload = parseConsumerPayload(record.body);
+        payload = parseConsumerPayload(record.body);
         await processRecord({
           messageId: record.messageId,
           payload,
@@ -137,6 +142,7 @@ export const createIntegrationConsumerHandler = ({
           integrationName: normalizedIntegrationName,
           messageId: record.messageId,
           receiveCount: record.attributes?.ApproximateReceiveCount ?? null,
+          correlationId: payload?.correlationId ?? null,
           classification,
           action: shouldRetry ? 'retry' : 'discard',
           reason: error instanceof Error ? error.message : 'unknown_error',

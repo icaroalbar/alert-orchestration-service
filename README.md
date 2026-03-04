@@ -14,6 +14,8 @@ A base do serviço é **TypeScript obrigatório**.
 - Código de aplicação deve ser criado em `.ts`.
 - `src/` não deve conter `.js` de runtime.
 - Validação mínima local: `npm run lint && npm run format:check && npm run typecheck && npm run test && npm run build`.
+- Logging operacional padronizado em JSON via `src/shared/logging/structured-logger.ts`.
+- Correlação em handlers HTTP prioriza header `x-correlation-id` com fallback para `requestId`.
 
 ## Scripts
 

@@ -74,6 +74,7 @@ describe('createIntegrationExternalApiClient', () => {
         {
           integrationName: 'salesforce',
           messageId: 'msg-1',
+          correlationId: 'exec-1',
           statusCode: 202,
           durationMs: 25,
         },

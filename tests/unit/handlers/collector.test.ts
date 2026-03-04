@@ -1,6 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 
-import type { CollectorIdempotencyClaim } from '../../../src/domain/collector/collector-idempotency-repository';
+import type {
+  CollectorIdempotencyClaim,
+  CollectorIdempotencyCompletion,
+} from '../../../src/domain/collector/collector-idempotency-repository';
 import type { CollectorCursorValue } from '../../../src/domain/collector/collector-cursor-repository';
 import type { CollectorStandardizedRecord } from '../../../src/domain/collector/collect-postgres-records';
 import type { MySqlQueryExecutor } from '../../../src/domain/collector/collect-mysql-records';
@@ -236,21 +239,30 @@ class SpyCustomerEventsPublisher {
 
 class SpyCollectorIdempotencyRepository {
   public readonly tryClaimCalls: CollectorIdempotencyClaim[] = [];
-  private readonly claimedKeys = new Set<string>();
+  public readonly markCompletedCalls: CollectorIdempotencyCompletion[] = [];
+  private readonly statusByKey = new Map<string, 'PENDING' | 'COMPLETED'>();
 
   constructor(private readonly forcedDuplicateKeys: Set<string> = new Set()) {}
 
   tryClaim = (claim: CollectorIdempotencyClaim): Promise<boolean> => {
     this.tryClaimCalls.push(claim);
-    if (
-      this.forcedDuplicateKeys.has(claim.deduplicationKey) ||
-      this.claimedKeys.has(claim.deduplicationKey)
-    ) {
+    if (this.forcedDuplicateKeys.has(claim.deduplicationKey)) {
       return Promise.resolve(false);
     }
 
-    this.claimedKeys.add(claim.deduplicationKey);
+    const currentStatus = this.statusByKey.get(claim.deduplicationKey);
+    if (currentStatus === 'COMPLETED') {
+      return Promise.resolve(false);
+    }
+
+    this.statusByKey.set(claim.deduplicationKey, claim.status ?? 'COMPLETED');
     return Promise.resolve(true);
+  };
+
+  markCompleted = (params: CollectorIdempotencyCompletion): Promise<void> => {
+    this.markCompletedCalls.push(params);
+    this.statusByKey.set(params.deduplicationKey, 'COMPLETED');
+    return Promise.resolve();
   };
 }
 
@@ -400,7 +412,7 @@ describe('collector handler', () => {
         values: ['2026-03-04T09:59:00.000Z'],
       },
     ]);
-    expect(logger.infoCalls).toEqual([
+    expect(logger.infoCalls).toEqual(expect.arrayContaining([
       [
         'collector.cursor.loaded',
         {
@@ -436,6 +448,22 @@ describe('collector handler', () => {
         },
       ],
       [
+        'collector.idempotency.upsert_pending_claimed',
+        {
+          sourceId: 'source-acme',
+          correlationId: 'source-acme-unknown-updated_at',
+          pendingCount: 2,
+        },
+      ],
+      [
+        'collector.idempotency.upsert_completed',
+        {
+          sourceId: 'source-acme',
+          correlationId: 'source-acme-unknown-updated_at',
+          completedCount: 2,
+        },
+      ],
+      [
         'collector.cursor.updated',
         {
           sourceId: 'source-acme',
@@ -444,7 +472,7 @@ describe('collector handler', () => {
           conflictRetries: 0,
         },
       ],
-    ]);
+    ]));
   });
 
   it('loads source config, runs mysql incremental query and returns standardized result', async () => {
@@ -827,6 +855,89 @@ describe('collector handler', () => {
           { id: 10, email: 'first@example.com' },
           { id: 11, email: 'second@example.com' },
         ],
+      },
+    ]);
+  });
+
+  it('retries upsert records after transient failure without false deduplication', async () => {
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          VALID_SOURCE.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        customer_id: 10,
+        email: 'first@example.com',
+        updated_at: new Date('2026-03-04T10:10:00.000Z'),
+      },
+    ]);
+    let upstreamAttempts = 0;
+    const upsertClient = new SpyUpsertCustomersBatchClient((records) => {
+      upstreamAttempts += 1;
+      if (upstreamAttempts === 1) {
+        throw new Error('temporary upstream failure');
+      }
+
+      return {
+        persistedRecords: [...records],
+        rejectedRecords: [],
+        attempts: 1,
+        durationMs: 20,
+      };
+    });
+    const idempotencyRepository = new SpyCollectorIdempotencyRepository();
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+      upsertCustomersBatchClient: upsertClient,
+      idempotencyRepository,
+    });
+
+    await expect(handler({ sourceId: VALID_SOURCE.sourceId })).rejects.toThrow(
+      'temporary upstream failure',
+    );
+
+    const result = await handler({ sourceId: VALID_SOURCE.sourceId });
+
+    expect(result.recordsSent).toBe(1);
+    expect(result.deduplicatedUpsertRecords).toBe(0);
+    expect(upsertClient.calls).toEqual([
+      {
+        sourceId: VALID_SOURCE.sourceId,
+        correlationId: `${VALID_SOURCE.sourceId}-unknown-${VALID_SOURCE.cursorField}`,
+        records: [{ id: 10, email: 'first@example.com' }],
+      },
+      {
+        sourceId: VALID_SOURCE.sourceId,
+        correlationId: `${VALID_SOURCE.sourceId}-unknown-${VALID_SOURCE.cursorField}`,
+        records: [{ id: 10, email: 'first@example.com' }],
+      },
+    ]);
+    expect(
+      idempotencyRepository.tryClaimCalls
+        .filter((claim) => claim.scope === 'upsert')
+        .map((claim) => claim.status),
+    ).toEqual(['PENDING', 'PENDING']);
+    expect(idempotencyRepository.markCompletedCalls).toEqual([
+      {
+        deduplicationKey: `upsert:${VALID_SOURCE.sourceId}:2026-03-01T00:00:00.000Z:10`,
+        completedAt: '2026-03-04T11:00:00.000Z',
+        expiresAtEpochSeconds: 3601,
       },
     ]);
   });

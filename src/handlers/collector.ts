@@ -845,6 +845,7 @@ export const createHandler =
             cursorToken,
           }),
           scope: 'upsert',
+          status: 'PENDING',
           sourceId,
           recordId,
           cursor: cursorToken,
@@ -881,6 +882,13 @@ export const createHandler =
           DeduplicatedRecords: duplicatedUpsertRecords.length,
         });
       }
+      if (nonDuplicatedUpsertRecords.length > 0) {
+        logger.info('collector.idempotency.upsert_pending_claimed', {
+          sourceId,
+          correlationId,
+          pendingCount: nonDuplicatedUpsertRecords.length,
+        });
+      }
 
       const upsertResult = await upsertCustomersBatchClient({
         sourceId,
@@ -897,6 +905,33 @@ export const createHandler =
       }
 
       const processedAt = now();
+      let completedUpsertClaims = 0;
+      for (const record of upsertResult.persistedRecords) {
+        const recordId = normalizeRecordId(record);
+        if (recordId.length === 0) {
+          continue;
+        }
+
+        await idempotencyRepository.markCompleted({
+          deduplicationKey: buildDeduplicationKey({
+            scope: 'upsert',
+            sourceId,
+            recordId,
+            cursorToken,
+          }),
+          completedAt: processedAt,
+          expiresAtEpochSeconds: claimExpiration,
+        });
+        completedUpsertClaims += 1;
+      }
+      if (completedUpsertClaims > 0) {
+        logger.info('collector.idempotency.upsert_completed', {
+          sourceId,
+          correlationId,
+          completedCount: completedUpsertClaims,
+        });
+      }
+
       const nonDuplicatedEventRecords: CollectorStandardizedRecord[] = [];
       const duplicatedEventRecords: CollectorStandardizedRecord[] = [];
       for (const record of upsertResult.persistedRecords) {

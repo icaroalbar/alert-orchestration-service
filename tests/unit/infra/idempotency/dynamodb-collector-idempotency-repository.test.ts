@@ -67,4 +67,43 @@ describe('createDynamoDbCollectorIdempotencyRepository', () => {
     expect(result).toBe(false);
     expect(client.sendCalls).toHaveLength(1);
   });
+
+  it('allows reclaim when previous status is pending', async () => {
+    const client = new SpyDynamoDbClient('success');
+    const repository = createDynamoDbCollectorIdempotencyRepository({
+      tableName: 'idempotency-table',
+      client: client as never,
+    });
+
+    const result = await repository.tryClaim({
+      deduplicationKey: 'upsert:source:cursor:1',
+      scope: 'upsert',
+      status: 'PENDING',
+      sourceId: 'source',
+      recordId: '1',
+      cursor: 'cursor',
+      correlationId: 'exec-1',
+      createdAt: '2026-03-04T10:00:00.000Z',
+      expiresAtEpochSeconds: 1_776_000_000,
+    });
+
+    expect(result).toBe(true);
+    expect(client.sendCalls).toHaveLength(1);
+  });
+
+  it('marks claim as completed after successful processing', async () => {
+    const client = new SpyDynamoDbClient('success');
+    const repository = createDynamoDbCollectorIdempotencyRepository({
+      tableName: 'idempotency-table',
+      client: client as never,
+    });
+
+    await repository.markCompleted({
+      deduplicationKey: 'upsert:source:cursor:1',
+      completedAt: '2026-03-04T10:05:00.000Z',
+      expiresAtEpochSeconds: 1_776_000_100,
+    });
+
+    expect(client.sendCalls).toHaveLength(1);
+  });
 });

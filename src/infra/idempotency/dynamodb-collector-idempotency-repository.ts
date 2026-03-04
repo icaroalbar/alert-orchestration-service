@@ -2,11 +2,13 @@ import {
   ConditionalCheckFailedException,
   DynamoDBClient,
   PutItemCommand,
+  UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
 
 import type {
   CollectorIdempotencyClaim,
+  CollectorIdempotencyCompletion,
   CollectorIdempotencyRepository,
 } from '../../domain/collector/collector-idempotency-repository';
 
@@ -48,6 +50,9 @@ export const createDynamoDbCollectorIdempotencyRepository = ({
         throw new Error('createdAt is required for idempotency claim.');
       }
 
+      const status = claim.status ?? 'COMPLETED';
+      const allowRetryWhenPending = status === 'PENDING';
+
       try {
         await client.send(
           new PutItemCommand({
@@ -55,6 +60,7 @@ export const createDynamoDbCollectorIdempotencyRepository = ({
             Item: marshall({
               deduplicationKey,
               scope: claim.scope,
+              status,
               sourceId: claim.sourceId,
               recordId: claim.recordId,
               cursor: claim.cursor,
@@ -62,10 +68,18 @@ export const createDynamoDbCollectorIdempotencyRepository = ({
               createdAt,
               expiresAt: claim.expiresAtEpochSeconds,
             }),
-            ConditionExpression: 'attribute_not_exists(#deduplicationKey)',
+            ConditionExpression: allowRetryWhenPending
+              ? 'attribute_not_exists(#deduplicationKey) OR #status = :pending'
+              : 'attribute_not_exists(#deduplicationKey)',
             ExpressionAttributeNames: {
               '#deduplicationKey': 'deduplicationKey',
+              '#status': 'status',
             },
+            ExpressionAttributeValues: allowRetryWhenPending
+              ? marshall({
+                  ':pending': 'PENDING',
+                })
+              : undefined,
           }),
         );
       } catch (error) {
@@ -77,6 +91,38 @@ export const createDynamoDbCollectorIdempotencyRepository = ({
       }
 
       return true;
+    },
+    async markCompleted(params: CollectorIdempotencyCompletion): Promise<void> {
+      const deduplicationKey = params.deduplicationKey.trim();
+      if (deduplicationKey.length === 0) {
+        throw new Error('deduplicationKey is required for idempotency completion.');
+      }
+
+      const completedAt = params.completedAt.trim();
+      if (completedAt.length === 0) {
+        throw new Error('completedAt is required for idempotency completion.');
+      }
+
+      await client.send(
+        new UpdateItemCommand({
+          TableName: resolvedTableName,
+          Key: marshall({
+            deduplicationKey,
+          }),
+          UpdateExpression:
+            'SET #status = :completed, #completedAt = :completedAt, #expiresAt = :expiresAt',
+          ExpressionAttributeNames: {
+            '#status': 'status',
+            '#completedAt': 'completedAt',
+            '#expiresAt': 'expiresAt',
+          },
+          ExpressionAttributeValues: marshall({
+            ':completed': 'COMPLETED',
+            ':completedAt': completedAt,
+            ':expiresAt': params.expiresAtEpochSeconds,
+          }),
+        }),
+      );
     },
   };
 };

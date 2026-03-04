@@ -49,7 +49,7 @@
         }
       ],
       "ResultPath": "$.schedulerResult",
-      "Next": "NormalizeSchedulerOutput",
+      "Next": "ProcessEligibleSources",
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
@@ -58,24 +58,10 @@
         }
       ]
     },
-    "NormalizeSchedulerOutput": {
-      "Type": "Pass",
-      "Parameters": {
-        "meta.$": "$.meta",
-        "scheduler": {
-          "sourceIds.$": "$.schedulerResult.sourceIds",
-          "generatedAt.$": "$.schedulerResult.generatedAt",
-          "maxConcurrency.$": "$.schedulerResult.maxConcurrency",
-          "eligibleSources.$": "States.ArrayLength($.schedulerResult.sourceIds)"
-        }
-      },
-      "ResultPath": "$",
-      "Next": "ProcessEligibleSources"
-    },
     "ProcessEligibleSources": {
       "Type": "Map",
-      "ItemsPath": "$.scheduler.sourceIds",
-      "MaxConcurrencyPath": "$.scheduler.maxConcurrency",
+      "ItemsPath": "$.schedulerResult.sourceIds",
+      "MaxConcurrencyPath": "$.schedulerResult.maxConcurrency",
       "Parameters": {
         "sourceId.$": "$$.Map.Item.Value",
         "meta.$": "$.meta"
@@ -278,13 +264,18 @@
       "Type": "Pass",
       "Parameters": {
         "meta.$": "$.meta",
-        "sources.$": "$.scheduler.sourceIds",
+        "sources.$": "$.schedulerResult.sourceIds",
         "results.$": "$.collectorResults",
+        "scheduler": {
+          "contractVersion.$": "$.schedulerResult.contractVersion",
+          "referenceNow.$": "$.schedulerResult.referenceNow",
+          "hasEligibleSources.$": "$.schedulerResult.hasEligibleSources"
+        },
         "summary": {
           "processedSources.$": "States.ArrayLength($.collectorResults)",
-          "eligibleSources.$": "$.scheduler.eligibleSources",
-          "generatedAt.$": "$.scheduler.generatedAt",
-          "maxConcurrency.$": "$.scheduler.maxConcurrency",
+          "eligibleSources.$": "$.schedulerResult.eligibleSources",
+          "generatedAt.$": "$.schedulerResult.generatedAt",
+          "maxConcurrency.$": "$.schedulerResult.maxConcurrency",
           "schedulerStatus": "SUCCEEDED"
         }
       },

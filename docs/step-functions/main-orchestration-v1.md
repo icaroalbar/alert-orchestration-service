@@ -44,13 +44,18 @@ Payload esperado na execução:
     - `MaxAttempts: 2`
     - `BackoffRate: 2`
 - Saída esperada em `schedulerResult`:
+  - `contractVersion` (`scheduler-output.v1`)
   - `sourceIds` (array de string)
+  - `eligibleSources` (number)
+  - `hasEligibleSources` (boolean)
+  - `referenceNow` (string ISO)
   - `generatedAt` (string ISO)
   - `maxConcurrency` (number, inteiro entre 1 e 40)
+  - Contrato detalhado em `docs/step-functions/scheduler-output-v1.md`.
 
 ### ProcessEligibleSources (Map)
 
-- Entrada: `scheduler.sourceIds` e `scheduler.maxConcurrency`.
+- Entrada: `schedulerResult.sourceIds` e `schedulerResult.maxConcurrency`.
 - Ação: itera cada `sourceId` e invoca `CollectorLambdaFunction`.
 - Retry com backoff exponencial na task `InvokeCollector` com os mesmos limites do `Scheduler`.
 - Catch por item no `InvokeCollector` (`States.ALL`) para registrar falha da fonte sem interromper o `Map`.
@@ -61,7 +66,7 @@ Payload esperado na execução:
   - sucesso: `sourceId`, `status=SUCCEEDED`, `processedAt`, `recordsSent`;
   - falha: `sourceId`, `status=FAILED`, `error`, `cause`.
 - Controle de paralelismo:
-  - `MaxConcurrencyPath = $.scheduler.maxConcurrency`.
+  - `MaxConcurrencyPath = $.schedulerResult.maxConcurrency`.
   - Valor configurado por stage via `MAP_MAX_CONCURRENCY`.
 
 ### BuildExecutionOutput (Pass)
@@ -71,6 +76,9 @@ Payload esperado na execução:
   - `meta`
   - `sources` (`schedulerResult.sourceIds`)
   - `results` (lista de itens com sucesso/falha por `sourceId`)
+  - `scheduler.contractVersion`
+  - `scheduler.referenceNow`
+  - `scheduler.hasEligibleSources`
   - `summary.eligibleSources` (tamanho de `sources`)
   - `summary.processedSources` (tamanho de `results`)
   - `summary.generatedAt`

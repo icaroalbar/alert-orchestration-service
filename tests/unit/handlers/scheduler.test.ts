@@ -116,6 +116,10 @@ describe('scheduler handler', () => {
       },
     ]);
     expect(result.sourceIds).toEqual(['source-b', 'source-c']);
+    expect(result.contractVersion).toBe('scheduler-output.v1');
+    expect(result.eligibleSources).toBe(2);
+    expect(result.hasEligibleSources).toBe(true);
+    expect(result.referenceNow).toBe('2026-03-04T09:01:00.000Z');
     expect(result.generatedAt).toBe('2026-03-04T10:00:00.000Z');
     expect(result.maxConcurrency).toBe(5);
     expect(infoSpy).toHaveBeenCalledWith('scheduler.eligible_sources.filtered', {
@@ -156,6 +160,9 @@ describe('scheduler handler', () => {
     const result = await handler();
 
     expect(result.sourceIds).toEqual(['source-a']);
+    expect(result.eligibleSources).toBe(1);
+    expect(result.hasEligibleSources).toBe(true);
+    expect(result.referenceNow).toBe('2026-03-04T09:00:00.000Z');
   });
 
   it('returns configured max concurrency from environment', async () => {
@@ -171,6 +178,11 @@ describe('scheduler handler', () => {
     const result = await handler();
 
     expect(result.maxConcurrency).toBe(12);
+    expect(result.contractVersion).toBe('scheduler-output.v1');
+    expect(result.sourceIds).toEqual([]);
+    expect(result.eligibleSources).toBe(0);
+    expect(result.hasEligibleSources).toBe(false);
+    expect(result.referenceNow).toBe('2026-03-04T10:00:00.000Z');
   });
 
   it('uses generatedAt as reference now when event.now is omitted', async () => {
@@ -219,6 +231,9 @@ describe('scheduler handler', () => {
     ]);
     expect(result.generatedAt).toBe('2026-03-04T10:00:00.000Z');
     expect(result.sourceIds).toEqual(['source-a']);
+    expect(result.eligibleSources).toBe(1);
+    expect(result.hasEligibleSources).toBe(true);
+    expect(result.referenceNow).toBe('2026-03-04T10:00:00.000Z');
   });
 
   it('throws on invalid MAP_MAX_CONCURRENCY', async () => {

@@ -84,7 +84,7 @@ describe('createIntegrationConsumerHandler', () => {
       Records: [
         {
           messageId: 'msg-1',
-          body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
         },
       ],
     });
@@ -120,6 +120,7 @@ describe('createIntegrationConsumerHandler', () => {
         payload: {
           eventType: 'customer.persisted',
           sourceId: 'source-1',
+          tenantId: 'tenant-acme',
           correlationId: 'exec-1',
           publishedAt: '2026-03-04T10:00:00.000Z',
           customer: { id: 1 },
@@ -164,7 +165,7 @@ describe('createIntegrationConsumerHandler', () => {
       Records: [
         {
           messageId: 'msg-valid',
-          body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
         },
         {
           messageId: 'msg-invalid-json',
@@ -172,7 +173,7 @@ describe('createIntegrationConsumerHandler', () => {
         },
         {
           messageId: 'msg-invalid-schema',
-          body: '{"eventType":"customer.persisted","sourceId":"","correlationId":"exec-2","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":2}}',
+          body: '{"eventType":"customer.persisted","sourceId":"","tenantId":"tenant-acme","correlationId":"exec-2","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":2}}',
         },
       ],
     });
@@ -211,14 +212,14 @@ describe('createIntegrationConsumerHandler', () => {
       Records: [
         {
           messageId: 'msg-permanent',
-          body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
           attributes: {
             ApproximateReceiveCount: '3',
           },
         },
         {
           messageId: 'msg-transient',
-          body: '{"eventType":"customer.persisted","sourceId":"source-2","correlationId":"exec-2","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":2}}',
+          body: '{"eventType":"customer.persisted","sourceId":"source-2","tenantId":"tenant-acme","correlationId":"exec-2","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":2}}',
           attributes: {
             ApproximateReceiveCount: '1',
           },
@@ -249,7 +250,7 @@ describe('createIntegrationConsumerHandler', () => {
       Records: [
         {
           messageId: 'msg-redelivery',
-          body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
         },
       ],
     });
@@ -300,7 +301,7 @@ describe('createIntegrationConsumerHandler', () => {
       Records: [
         {
           messageId: 'msg-1',
-          body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+          body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
           attributes: {
             ApproximateReceiveCount: '1',
           },

@@ -115,6 +115,7 @@ export const createIntegrationExternalApiClient = ({
         eventType: payload.eventType,
         integrationId: normalizedIntegrationName,
         sourceId: payload.sourceId,
+        tenantId: payload.tenantId,
         correlationId: payload.correlationId,
         occurredAt: payload.publishedAt,
         customer: payload.customer,

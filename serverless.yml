@@ -22,6 +22,7 @@ provider:
     SERVICE_NAME: ${self:service}
     SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}
     CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
+    IDEMPOTENCY_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.idempotencyTableName}
     MAP_MAX_CONCURRENCY: ${self:custom.stages.${self:provider.stage}.mapMaxConcurrency}
     COLLECTOR_DEFAULT_CURSOR: ${env:COLLECTOR_DEFAULT_CURSOR, '1970-01-01T00:00:00.000Z'}
     COLLECTOR_POSTGRES_POOL_MAX_CONNECTIONS: ${env:COLLECTOR_POSTGRES_POOL_MAX_CONNECTIONS, '5'}
@@ -36,6 +37,7 @@ provider:
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS, '3'}
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS, '200'}
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE, '2'}
+    COLLECTOR_IDEMPOTENCY_TTL_SECONDS: ${env:COLLECTOR_IDEMPOTENCY_TTL_SECONDS, '604800'}
     CLIENT_EVENTS_TOPIC_ARN:
       Ref: ClientEventsTopic
     SALESFORCE_INTEGRATION_QUEUE_URL:
@@ -97,6 +99,7 @@ custom:
       sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_DEV, 'alert-orchestration-service-dev-source-registry-api'}
       sourcesTableName: ${self:service}-dev-sources
       cursorsTableName: ${self:service}-dev-cursors
+      idempotencyTableName: ${self:service}-dev-idempotency
       clientEventsTopicName: ${self:service}-dev-client-events
       salesforceQueueName: ${self:service}-dev-salesforce-events
       hubspotQueueName: ${self:service}-dev-hubspot-events
@@ -116,6 +119,7 @@ custom:
       sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_STG, 'alert-orchestration-service-stg-source-registry-api'}
       sourcesTableName: ${self:service}-stg-sources
       cursorsTableName: ${self:service}-stg-cursors
+      idempotencyTableName: ${self:service}-stg-idempotency
       clientEventsTopicName: ${self:service}-stg-client-events
       salesforceQueueName: ${self:service}-stg-salesforce-events
       hubspotQueueName: ${self:service}-stg-hubspot-events
@@ -135,6 +139,7 @@ custom:
       sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_PROD, 'alert-orchestration-service-prod-source-registry-api'}
       sourcesTableName: ${self:service}-prod-sources
       cursorsTableName: ${self:service}-prod-cursors
+      idempotencyTableName: ${self:service}-prod-idempotency
       clientEventsTopicName: ${self:service}-prod-client-events
       salesforceQueueName: ${self:service}-prod-salesforce-events
       hubspotQueueName: ${self:service}-prod-hubspot-events
@@ -439,6 +444,14 @@ resources:
                     - Fn::GetAtt:
                         - CursorsTable
                         - Arn
+                - Sid: WriteIdempotencyClaims
+                  Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - IdempotencyTable
+                        - Arn
                 - Sid: PublishClientEvents
                   Effect: Allow
                   Action:
@@ -585,6 +598,22 @@ resources:
         KeySchema:
           - AttributeName: source
             KeyType: HASH
+        SSESpecification:
+          SSEEnabled: true
+    IdempotencyTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.stages.${self:provider.stage}.idempotencyTableName}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: deduplicationKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: deduplicationKey
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: true
         SSESpecification:
           SSEEnabled: true
     ClientEventsTopic:

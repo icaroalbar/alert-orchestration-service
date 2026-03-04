@@ -254,6 +254,8 @@ describe('collector handler', () => {
     expect(result.sourceId).toBe('source-acme');
     expect(result.processedAt).toBe('2026-03-04T11:00:00.000Z');
     expect(result.recordsSent).toBe(2);
+    expect(result.schemaVersion).toBe('1.0.0');
+    expect(result.rejectedRecords).toEqual([]);
     expect(result.records).toEqual([
       {
         id: 10,
@@ -359,6 +361,8 @@ describe('collector handler', () => {
     const result = await handler({ sourceId: VALID_MYSQL_SOURCE.sourceId, cursor: 42 });
 
     expect(result.recordsSent).toBe(1);
+    expect(result.schemaVersion).toBe('1.0.0');
+    expect(result.rejectedRecords).toEqual([]);
     expect(result.records).toEqual([
       {
         id: 99,
@@ -476,6 +480,81 @@ describe('collector handler', () => {
       },
     ]);
     expect(cursorRepository.saveCalls).toEqual([]);
+  });
+
+  it('filters invalid canonical records and keeps explicit rejection reasons', async () => {
+    const sourceWithEmailFieldMap: SourceRegistryRecord = {
+      ...VALID_SOURCE,
+      sourceId: 'source-canonical-validation',
+      fieldMap: {
+        id: 'customer_id',
+        email: 'email',
+      },
+    };
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([
+        [sourceWithEmailFieldMap.sourceId, sourceWithEmailFieldMap],
+      ]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          sourceWithEmailFieldMap.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        customer_id: 41,
+        email: 'valid@example.com',
+        updated_at: new Date('2026-03-04T10:10:00.000Z'),
+      },
+      {
+        customer_id: 42,
+        email: 'invalid email',
+        updated_at: new Date('2026-03-04T10:11:00.000Z'),
+      },
+    ]);
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+    });
+
+    const result = await handler({ sourceId: sourceWithEmailFieldMap.sourceId });
+
+    expect(result.schemaVersion).toBe('1.0.0');
+    expect(result.recordsSent).toBe(1);
+    expect(result.records).toEqual([
+      {
+        id: 41,
+        email: 'valid@example.com',
+      },
+    ]);
+    expect(result.rejectedRecords).toEqual([
+      {
+        index: 1,
+        record: {
+          id: 42,
+          email: 'invalid email',
+        },
+        issues: [
+          {
+            field: 'email',
+            code: 'INVALID_FORMAT',
+            message: 'email must contain "@" and cannot contain spaces.',
+          },
+        ],
+      },
+    ]);
   });
 
   it('fails with traceable error when required field mapping is missing', async () => {

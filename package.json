@@ -26,6 +26,10 @@
     "sls:package:stg": "npm run build && serverless package --stage stg",
     "sls:package:prod": "npm run build && serverless package --stage prod",
     "sls:package:all": "npm run sls:package:dev && npm run sls:package:stg && npm run sls:package:prod",
+    "sls:deploy:dev": "npm run build && serverless deploy --stage dev",
+    "sls:deploy:stg": "npm run build && serverless deploy --stage stg",
+    "sls:deploy:prod": "npm run build && serverless deploy --stage prod",
+    "dlq:reprocess": "node ./scripts/reprocess-dlq.mjs",
     "validate:stage-render": "node ./scripts/validate-stage-render.mjs",
     "validate:stage-package": "node ./scripts/validate-stage-package.mjs",
     "typecheck": "tsc --noEmit",
@@ -46,5 +50,17 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1001.0",
+    "@aws-sdk/client-dynamodb": "^3.1001.0",
+    "@aws-sdk/client-secrets-manager": "^3.1001.0",
+    "@aws-sdk/client-sns": "^3.1001.0",
+    "@aws-sdk/client-sqs": "^3.1001.0",
+    "@aws-sdk/util-dynamodb": "^3.996.1",
+    "@types/pg": "^8.18.0",
+    "cron-parser": "^5.5.0",
+    "mysql2": "^3.18.2",
+    "pg": "^8.19.0"
   }
 }

@@ -19,19 +19,22 @@ Fluxo:
 7. Spawn platform_architect.
 8. Spawn worker.
 9. Criar PR.
-10. Parar execução.
-11. Se houver PR aberto com CHANGES_REQUESTED:
+10. Garantir que o body do PR contenha `Closes #<issue>` (ou `Fixes`/`Resolves`) com número real.
+11. Após merge em `develop`, verificar se a issue foi fechada automaticamente.
+   - Se não fechou, fechar manualmente imediatamente e registrar causa.
+12. Parar execução.
+13. Se houver PR aberto com CHANGES_REQUESTED:
    - Analise severidade.
    - Se for correção pequena → corrigir na mesma branch.
    - Se for melhoria estrutural → criar nova issue.
-12. Nunca misture feature diferente na mesma branch.
+14. Nunca misture feature diferente na mesma branch.
 
-13. Cada branch deve representar UMA issue.
-14. Spawn issue-generator quando:
+15. Cada branch deve representar UMA issue.
+16. Spawn issue-generator quando:
    - houver problema identificado sem issue existente;
    - houver ajuste de processo/configuração de agentes (.codex);
    - houver lacuna de follow-up não coberta por issue aberta.
-15. No resumo final, informar explicitamente:
+17. No resumo final, informar explicitamente:
    - se issue-generator foi acionado ou não;
    - justificativa objetiva da decisão.
 """

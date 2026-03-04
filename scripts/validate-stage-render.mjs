@@ -1,6 +1,8 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
+const DEFAULT_STAGE_RENDER_COMMAND = 'npm run sls:print:all';
+
 const run = (command) =>
   execSync(command, {
     encoding: 'utf8',
@@ -16,7 +18,14 @@ const printCapturedOutput = (error) => {
   return `${stdout}\n${stderr}`;
 };
 
-const staticFallback = () => {
+const emitUnclassifiedFailure = ({ stage, command }) => {
+  console.error(`UNCLASSIFIED_STAGE_VALIDATION_ERROR stage=${stage} command="${command}"`);
+  console.error(
+    'Próxima ação: habilite modo verbose (DEBUG=* ou SLS_DEBUG=*) e revise os logs do comando subjacente.',
+  );
+};
+
+const staticFallback = (reason) => {
   const serverless = readFileSync(new URL('../serverless.yml', import.meta.url), 'utf8');
   const stateMachineFile = new URL(
     '../state-machines/main-orchestration-v1.asl.json',
@@ -28,8 +37,23 @@ const staticFallback = () => {
     'region: ${self:custom.stages.${self:provider.stage}.region}',
     'logRetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}',
     'lambda: ${self:custom.stages.${self:provider.stage}.tracing}',
+    'httpApi:',
+    'authorizers:',
+    'sourceRegistryJwtAuthorizer:',
+    'type: jwt',
+    'identitySource: $request.header.Authorization',
+    'issuerUrl: ${self:custom.stages.${self:provider.stage}.sourceRegistryJwtIssuerUrl}',
+    'sourceRegistryReadScope: sources:read',
+    'sourceRegistryWriteScope: sources:write',
+    "sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_DEV, 'https://auth.dev.alert-orchestration.internal'}",
+    "sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_STG, 'https://auth.stg.alert-orchestration.internal'}",
+    "sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_PROD, 'https://auth.alert-orchestration.internal'}",
+    "sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_DEV, 'alert-orchestration-service-dev-source-registry-api'}",
+    "sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_STG, 'alert-orchestration-service-stg-source-registry-api'}",
+    "sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_PROD, 'alert-orchestration-service-prod-source-registry-api'}",
     'SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}',
     'CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}',
+    'MAP_MAX_CONCURRENCY: ${self:custom.stages.${self:provider.stage}.mapMaxConcurrency}',
     'CLIENT_EVENTS_TOPIC_ARN:',
     'SALESFORCE_INTEGRATION_QUEUE_URL:',
     'SALESFORCE_INTEGRATION_QUEUE_ARN:',
@@ -39,9 +63,13 @@ const staticFallback = () => {
     'SALESFORCE_INTEGRATION_DLQ_ARN:',
     'HUBSPOT_INTEGRATION_DLQ_URL:',
     'HUBSPOT_INTEGRATION_DLQ_ARN:',
+    "METRICS_NAMESPACE: ${env:METRICS_NAMESPACE, 'AlertOrchestrationService/Runtime'}",
+    "INTEGRATION_TARGETS: ${env:INTEGRATION_TARGETS, 'salesforce|hubspot'}",
     'schedulerFunctionName: ${self:custom.naming.prefix}-scheduler',
     'orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration',
     'orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule',
+    'orchestrationLogGroupName: /aws/vendedlogs/states/${self:custom.naming.orchestrationStateMachineName}',
+    'orchestrationDashboardName: ${self:custom.naming.prefix}-orchestration-observability',
     'schedulerRoleName: ${self:custom.naming.prefix}-scheduler-role',
     'stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role',
     'collectorRoleName: ${self:custom.naming.prefix}-collector-role',
@@ -49,6 +77,12 @@ const staticFallback = () => {
     'hubspotConsumerRoleName: ${self:custom.naming.prefix}-hubspot-consumer-role',
     'name: ${self:custom.naming.orchestrationStateMachineName}',
     'name: ${self:custom.naming.orchestrationScheduleRuleName}',
+    'tracingConfig:',
+    'enabled: ${self:custom.stages.${self:provider.stage}.tracing}',
+    'loggingConfig:',
+    'level: ALL',
+    'includeExecutionData: true',
+    'Fn::Sub: ${MainOrchestrationStateMachineLogGroup.Arn}:*',
     'definition: ${file(./state-machines/main-orchestration-v1.asl.json)}',
     'description: Disparo global da orquestracao principal via EventBridge.',
     'rate: ${self:custom.stages.${self:provider.stage}.orchestrationScheduleExpression}',
@@ -56,12 +90,35 @@ const staticFallback = () => {
     'source: eventbridge',
     'Service: states.amazonaws.com',
     'Sid: InvokeSchedulerLambda',
+    'Sid: InvokeCollectorLambda',
     'name: ${self:custom.naming.schedulerFunctionName}',
+    'handler: dist/handlers/collector.handler',
+    'handler: dist/handlers/salesforce-consumer.handler',
+    'handler: dist/handlers/hubspot-consumer.handler',
+    'functionResponseType: ReportBatchItemFailures',
     'MainStateMachineExecutionRole',
     'SchedulerExecutionRole',
     'CollectorExecutionRole',
+    'MainOrchestrationStateMachineLogGroup:',
+    'LogGroupName: ${self:custom.naming.orchestrationLogGroupName}',
+    'Sid: DeliverStepFunctionsExecutionLogs',
+    'logs:CreateLogDelivery',
+    'logs:GetLogDelivery',
+    'logs:UpdateLogDelivery',
+    'logs:DeleteLogDelivery',
+    'logs:ListLogDeliveries',
+    'logs:PutResourcePolicy',
+    'logs:DescribeResourcePolicies',
+    'logs:DescribeLogGroups',
+    'Sid: PublishOrchestrationMetrics',
+    'cloudwatch:PutMetricData',
+    'cloudwatch:namespace: AlertOrchestrationService/Orchestration',
     'SalesforceConsumerExecutionRole',
     'HubspotConsumerExecutionRole',
+    'PublishCollectorRuntimeMetrics',
+    'PublishSalesforceRuntimeMetrics',
+    'PublishHubspotRuntimeMetrics',
+    "cloudwatch:namespace: ${env:METRICS_NAMESPACE, 'AlertOrchestrationService/Runtime'}",
     'sourcesTableName: ${self:service}-dev-sources',
     'sourcesTableName: ${self:service}-stg-sources',
     'sourcesTableName: ${self:service}-prod-sources',
@@ -88,8 +145,65 @@ const staticFallback = () => {
     'hubspotDlqName: ${self:service}-stg-hubspot-events-dlq',
     'hubspotDlqName: ${self:service}-prod-hubspot-events-dlq',
     'integrationDlqMessageRetentionSeconds: 1209600',
+    'dlqAlarmTopicName: ${self:service}-dev-dlq-alarms',
+    'dlqAlarmTopicName: ${self:service}-stg-dlq-alarms',
+    'dlqAlarmTopicName: ${self:service}-prod-dlq-alarms',
+    'operationalAlarmTopicName: ${self:service}-dev-operational-alarms',
+    'operationalAlarmTopicName: ${self:service}-stg-operational-alarms',
+    'operationalAlarmTopicName: ${self:service}-prod-operational-alarms',
+    'salesforceDlqAlarmThreshold: 1',
+    'salesforceDlqAlarmThreshold: 5',
+    'hubspotDlqAlarmThreshold: 1',
+    'hubspotDlqAlarmThreshold: 5',
+    'dlqAlarmPeriodSeconds: 60',
+    'dlqAlarmEvaluationPeriods: 1',
+    'operationalAlarmPeriodSeconds: 60',
+    'operationalAlarmEvaluationPeriods: 1',
+    'lambdaErrorAlarmThreshold: 1',
+    'lambdaErrorAlarmThreshold: 2',
+    'schedulerDurationAlarmThresholdMs: 25000',
+    'collectorDurationAlarmThresholdMs: 50000',
+    'consumerDurationAlarmThresholdMs: 25000',
+    'orchestrationFailureAlarmThreshold: 1',
+    'orchestrationFailureAlarmThreshold: 2',
+    'orchestrationTimeoutAlarmThreshold: 1',
+    'orchestrationDurationP95AlarmThresholdMs: 300000',
+    'orchestrationDurationP95AlarmThresholdMs: 420000',
+    'schedulerMemorySize: 256',
+    'schedulerMemorySize: 384',
+    'schedulerTimeoutSeconds: 45',
+    'schedulerTimeoutSeconds: 60',
+    'collectorMemorySize: 512',
+    'collectorMemorySize: 768',
+    'collectorMemorySize: 1024',
+    'collectorTimeoutSeconds: 90',
+    'collectorTimeoutSeconds: 120',
+    'consumerMemorySize: 256',
+    'consumerMemorySize: 384',
+    'consumerMemorySize: 512',
+    'consumerTimeoutSeconds: 45',
+    'consumerTimeoutSeconds: 60',
+    'sourceRegistryApiMemorySize: 256',
+    'sourceRegistryApiMemorySize: 384',
+    'sourceRegistryApiTimeoutSeconds: 20',
+    'sourceRegistryApiTimeoutSeconds: 25',
+    'memorySize: ${self:custom.stages.${self:provider.stage}.schedulerMemorySize}',
+    'timeout: ${self:custom.stages.${self:provider.stage}.schedulerTimeoutSeconds}',
+    'memorySize: ${self:custom.stages.${self:provider.stage}.collectorMemorySize}',
+    'timeout: ${self:custom.stages.${self:provider.stage}.collectorTimeoutSeconds}',
+    'memorySize: ${self:custom.stages.${self:provider.stage}.consumerMemorySize}',
+    'timeout: ${self:custom.stages.${self:provider.stage}.consumerTimeoutSeconds}',
+    'memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}',
+    'timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}',
+    'salesforceQueueMaxReceiveCount: 3',
     'salesforceQueueMaxReceiveCount: 5',
+    'salesforceQueueMaxReceiveCount: 8',
+    'hubspotQueueMaxReceiveCount: 3',
     'hubspotQueueMaxReceiveCount: 5',
+    'hubspotQueueMaxReceiveCount: 8',
+    'mapMaxConcurrency: 2',
+    'mapMaxConcurrency: 5',
+    'mapMaxConcurrency: 10',
     'SourcesTable:',
     'CursorsTable:',
     'ClientEventsTopic:',
@@ -101,6 +215,38 @@ const staticFallback = () => {
     'IntegrationQueuesPolicy:',
     'SalesforceIntegrationSubscription:',
     'HubspotIntegrationSubscription:',
+    'DlqAlarmTopic:',
+    'SalesforceIntegrationDlqVisibleMessagesAlarm:',
+    'HubspotIntegrationDlqVisibleMessagesAlarm:',
+    'OperationalAlarmTopic:',
+    'SchedulerErrorsAlarm:',
+    'SchedulerDurationP95HighAlarm:',
+    'CollectorErrorsAlarm:',
+    'CollectorDurationP95HighAlarm:',
+    'SalesforceConsumerErrorsAlarm:',
+    'SalesforceConsumerDurationP95HighAlarm:',
+    'HubspotConsumerErrorsAlarm:',
+    'HubspotConsumerDurationP95HighAlarm:',
+    'MainOrchestrationExecutionsFailedAlarm:',
+    'MainOrchestrationExecutionsTimedOutAlarm:',
+    'MainOrchestrationExecutionTimeP95HighAlarm:',
+    'Type: AWS::CloudWatch::Alarm',
+    'Namespace: AWS/SQS',
+    'MetricName: ApproximateNumberOfMessagesVisible',
+    'Namespace: AWS/Lambda',
+    'MetricName: Errors',
+    'MetricName: Duration',
+    'Namespace: AWS/States',
+    'MetricName: ExecutionsFailed',
+    'MetricName: ExecutionsTimedOut',
+    'ExtendedStatistic: p95',
+    'AlarmActions:',
+    'OKActions:',
+    'MainOrchestrationObservabilityDashboard:',
+    'Type: AWS::CloudWatch::Dashboard',
+    'DashboardName: ${self:custom.naming.orchestrationDashboardName}',
+    'ExecutionTime',
+    'AlertOrchestrationService/Orchestration',
     'SchedulerExecutionRoleArn:',
     'MainStateMachineExecutionRoleArn:',
     'CollectorExecutionRoleArn:',
@@ -118,6 +264,25 @@ const staticFallback = () => {
     'HubspotIntegrationDlqArn:',
     'SalesforceIntegrationSubscriptionArn:',
     'HubspotIntegrationSubscriptionArn:',
+    'DlqAlarmTopicArn:',
+    'SalesforceIntegrationDlqVisibleMessagesAlarmName:',
+    'SalesforceIntegrationDlqVisibleMessagesAlarmArn:',
+    'HubspotIntegrationDlqVisibleMessagesAlarmName:',
+    'HubspotIntegrationDlqVisibleMessagesAlarmArn:',
+    'OperationalAlarmTopicArn:',
+    'SchedulerErrorsAlarmName:',
+    'SchedulerDurationP95HighAlarmName:',
+    'CollectorErrorsAlarmName:',
+    'CollectorDurationP95HighAlarmName:',
+    'SalesforceConsumerErrorsAlarmName:',
+    'SalesforceConsumerDurationP95HighAlarmName:',
+    'HubspotConsumerErrorsAlarmName:',
+    'HubspotConsumerDurationP95HighAlarmName:',
+    'MainOrchestrationExecutionsFailedAlarmName:',
+    'MainOrchestrationExecutionsTimedOutAlarmName:',
+    'MainOrchestrationExecutionTimeP95HighAlarmName:',
+    'MainOrchestrationStateMachineLogGroupName:',
+    'MainOrchestrationObservabilityDashboardName:',
     'MainStateMachineName:',
     'MainStateMachineArn:',
     'Name: ${self:custom.naming.prefix}-main-state-machine-name',
@@ -135,6 +300,7 @@ const staticFallback = () => {
     'VisibilityTimeout: 60',
     'ReceiveMessageWaitTimeSeconds: 20',
     'RedrivePolicy:',
+    'deadLetterTargetArn:',
     'maxReceiveCount: ${self:custom.stages.${self:provider.stage}.salesforceQueueMaxReceiveCount}',
     'maxReceiveCount: ${self:custom.stages.${self:provider.stage}.hubspotQueueMaxReceiveCount}',
     'Type: AWS::SQS::QueuePolicy',
@@ -150,11 +316,54 @@ const staticFallback = () => {
     'prod:',
   ];
 
+  const sourceRegistryProtectedRouteSnippets = [
+    `- httpApi:
+          method: post
+          path: /sources
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - \${self:custom.auth.sourceRegistryWriteScope}`,
+    `- httpApi:
+          method: patch
+          path: /sources/{id}
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - \${self:custom.auth.sourceRegistryWriteScope}`,
+    `- httpApi:
+          method: delete
+          path: /sources/{id}
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - \${self:custom.auth.sourceRegistryWriteScope}`,
+    `- httpApi:
+          method: get
+          path: /sources
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - \${self:custom.auth.sourceRegistryReadScope}`,
+  ];
+
   const missing = checks.filter((check) => !serverless.includes(check));
   if (missing.length > 0) {
     console.error('Falha no fallback estático de stage render:');
     for (const check of missing) {
       console.error(`- Ausente: ${check}`);
+    }
+    process.exit(1);
+  }
+
+  const missingProtectedRoutes = sourceRegistryProtectedRouteSnippets.filter(
+    (snippet) => !serverless.includes(snippet),
+  );
+  if (missingProtectedRoutes.length > 0) {
+    console.error('Falha no fallback estático de stage render: rotas /sources sem auth esperada.');
+    for (const snippet of missingProtectedRoutes) {
+      const firstLine = snippet.split('\n')[0] ?? snippet;
+      console.error(`- Snippet ausente: ${firstLine.trim()}`);
     }
     process.exit(1);
   }
@@ -169,7 +378,27 @@ const staticFallback = () => {
   }
 
   const states = definition?.States ?? {};
-  const requiredStates = ['NormalizeInput', 'Scheduler', 'BuildExecutionOutput', 'Done'];
+  const hasExpectedRetryPolicy = (retryBlock, expectedErrors, intervalSeconds, maxAttempts) =>
+    Array.isArray(retryBlock) &&
+    retryBlock.some((entry) => {
+      const errors = Array.isArray(entry?.ErrorEquals) ? entry.ErrorEquals : [];
+      return (
+        JSON.stringify(errors) === JSON.stringify(expectedErrors) &&
+        entry?.IntervalSeconds === intervalSeconds &&
+        entry?.MaxAttempts === maxAttempts &&
+        entry?.BackoffRate === 2
+      );
+    });
+
+  const requiredStates = [
+    'NormalizeInput',
+    'Scheduler',
+    'ProcessEligibleSources',
+    'BuildExecutionOutput',
+    'PublishExecutionSuccessMetric',
+    'PublishExecutionFailureMetric',
+    'Done',
+  ];
   const missingStates = requiredStates.filter((stateName) => !(stateName in states));
   if (definition?.StartAt !== 'NormalizeInput' || missingStates.length > 0) {
     console.error('Falha no fallback estático: definição ASL principal incompleta.');
@@ -182,13 +411,139 @@ const staticFallback = () => {
     process.exit(1);
   }
 
+  const processEligibleSources = states.ProcessEligibleSources ?? {};
+  if (processEligibleSources.MaxConcurrencyPath !== '$.schedulerResult.maxConcurrency') {
+    console.error('Falha no fallback estático: Map sem MaxConcurrencyPath esperado.');
+    process.exit(1);
+  }
+
+  const buildExecutionOutput = states.BuildExecutionOutput ?? {};
+  const summaryParams = buildExecutionOutput.Parameters?.summary ?? {};
+  if (summaryParams['maxConcurrency.$'] !== '$.schedulerResult.maxConcurrency') {
+    console.error('Falha no fallback estático: summary sem maxConcurrency.');
+    process.exit(1);
+  }
+  if (buildExecutionOutput.Next !== 'PublishExecutionSuccessMetric') {
+    console.error(
+      'Falha no fallback estático: BuildExecutionOutput deve encadear PublishExecutionSuccessMetric.',
+    );
+    process.exit(1);
+  }
+
+  const buildSchedulerFailureOutput = states.BuildSchedulerFailureOutput ?? {};
+  if (buildSchedulerFailureOutput.Next !== 'PublishExecutionFailureMetric') {
+    console.error(
+      'Falha no fallback estático: BuildSchedulerFailureOutput deve encadear PublishExecutionFailureMetric.',
+    );
+    process.exit(1);
+  }
+
+  const hasPutMetricDataResource = (state) =>
+    state?.Type === 'Task' &&
+    state?.Resource === 'arn:aws:states:::aws-sdk:cloudwatch:putMetricData';
+  if (
+    !hasPutMetricDataResource(states.PublishExecutionSuccessMetric) ||
+    !hasPutMetricDataResource(states.PublishExecutionFailureMetric)
+  ) {
+    console.error('Falha no fallback estático: tasks de métrica de execução ausentes no ASL.');
+    process.exit(1);
+  }
+
+  const schedulerRetry = states.Scheduler?.Retry;
+  const hasSchedulerLambdaRetry = hasExpectedRetryPolicy(
+    schedulerRetry,
+    [
+      'Lambda.ServiceException',
+      'Lambda.AWSLambdaException',
+      'Lambda.SdkClientException',
+      'Lambda.TooManyRequestsException',
+    ],
+    2,
+    3,
+  );
+  const hasSchedulerTimeoutRetry = hasExpectedRetryPolicy(schedulerRetry, ['States.Timeout'], 5, 2);
+  if (!hasSchedulerLambdaRetry || !hasSchedulerTimeoutRetry) {
+    console.error('Falha no fallback estático: Scheduler sem política de retry/backoff esperada.');
+    process.exit(1);
+  }
+
+  const invokeCollectorRetry =
+    states.ProcessEligibleSources?.Iterator?.States?.InvokeCollector?.Retry;
+  const hasCollectorLambdaRetry = hasExpectedRetryPolicy(
+    invokeCollectorRetry,
+    [
+      'Lambda.ServiceException',
+      'Lambda.AWSLambdaException',
+      'Lambda.SdkClientException',
+      'Lambda.TooManyRequestsException',
+    ],
+    2,
+    3,
+  );
+  const hasCollectorTimeoutRetry = hasExpectedRetryPolicy(
+    invokeCollectorRetry,
+    ['States.Timeout'],
+    5,
+    2,
+  );
+  if (!hasCollectorLambdaRetry || !hasCollectorTimeoutRetry) {
+    console.error(
+      'Falha no fallback estático: InvokeCollector sem política de retry/backoff esperada.',
+    );
+    process.exit(1);
+  }
+
+  const invokeCollectorCatch =
+    states.ProcessEligibleSources?.Iterator?.States?.InvokeCollector?.Catch;
+  const hasCollectorCatch =
+    Array.isArray(invokeCollectorCatch) &&
+    invokeCollectorCatch.some(
+      (entry) =>
+        JSON.stringify(entry?.ErrorEquals ?? []) === JSON.stringify(['States.ALL']) &&
+        entry?.ResultPath === '$.collectorError' &&
+        entry?.Next === 'BuildItemFailureResult',
+    );
+  if (!hasCollectorCatch) {
+    console.error('Falha no fallback estático: InvokeCollector sem Catch por item esperado.');
+    process.exit(1);
+  }
+
+  const buildItemFailureResult =
+    states.ProcessEligibleSources?.Iterator?.States?.BuildItemFailureResult ?? {};
+  const publishItemSuccessMetric =
+    states.ProcessEligibleSources?.Iterator?.States?.PublishItemSuccessMetric ?? {};
+  const publishItemFailureMetric =
+    states.ProcessEligibleSources?.Iterator?.States?.PublishItemFailureMetric ?? {};
+  if (
+    !hasPutMetricDataResource(publishItemSuccessMetric) ||
+    !hasPutMetricDataResource(publishItemFailureMetric)
+  ) {
+    console.error('Falha no fallback estático: tasks de métrica por item ausentes no Map.');
+    process.exit(1);
+  }
+
+  if (
+    buildItemFailureResult?.Type !== 'Pass' ||
+    buildItemFailureResult?.Parameters?.result?.status !== 'FAILED' ||
+    buildItemFailureResult?.Parameters?.result?.['error.$'] !== '$.collectorError.Error' ||
+    buildItemFailureResult?.Parameters?.result?.['cause.$'] !== '$.collectorError.Cause'
+  ) {
+    console.error(
+      'Falha no fallback estático: BuildItemFailureResult sem contrato esperado de erro.',
+    );
+    process.exit(1);
+  }
+
   console.warn(
-    '\nAviso: renderização multi-stage indisponível por rede. Fallback estático no serverless.yml concluído.',
+    `\nAviso: renderização multi-stage indisponível no ambiente atual (${reason}). Fallback estático no serverless.yml concluído.`,
   );
 };
 
+const stageRenderCommand =
+  process.env.VALIDATE_STAGE_RENDER_COMMAND ?? DEFAULT_STAGE_RENDER_COMMAND;
+
 try {
-  const output = run('npm run sls:print:all');
+  const output = run(stageRenderCommand);
   if (output) process.stdout.write(output);
   process.exit(0);
 } catch (error) {
@@ -197,10 +552,19 @@ try {
     output.includes('Unable to reach the Serverless API') ||
     output.includes('core.serverless.com') ||
     output.includes('EAI_AGAIN');
+  const authIssue =
+    output.includes('You must sign in or use a license key with Serverless Framework V.4') ||
+    output.includes('Please use "serverless login".');
+  const canFallback = networkIssue || authIssue;
 
-  if (!networkIssue) {
+  if (!canFallback) {
+    emitUnclassifiedFailure({
+      stage: 'stage-render',
+      command: stageRenderCommand,
+    });
     process.exit(1);
   }
 
-  staticFallback();
+  const fallbackReason = authIssue ? 'autenticação/licença do Serverless v4' : 'rede';
+  staticFallback(fallbackReason);
 }

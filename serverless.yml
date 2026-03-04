@@ -9,11 +9,40 @@ provider:
   logRetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
   tracing:
     lambda: ${self:custom.stages.${self:provider.stage}.tracing}
+  httpApi:
+    authorizers:
+      sourceRegistryJwtAuthorizer:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: ${self:custom.stages.${self:provider.stage}.sourceRegistryJwtIssuerUrl}
+        audience:
+          - ${self:custom.stages.${self:provider.stage}.sourceRegistryJwtAudience}
   environment:
     STAGE: ${self:provider.stage}
     SERVICE_NAME: ${self:service}
     SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}
     CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
+    IDEMPOTENCY_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.idempotencyTableName}
+    MAP_MAX_CONCURRENCY: ${self:custom.stages.${self:provider.stage}.mapMaxConcurrency}
+    COLLECTOR_DEFAULT_CURSOR: ${env:COLLECTOR_DEFAULT_CURSOR, '1970-01-01T00:00:00.000Z'}
+    COLLECTOR_POSTGRES_POOL_MAX_CONNECTIONS: ${env:COLLECTOR_POSTGRES_POOL_MAX_CONNECTIONS, '5'}
+    COLLECTOR_POSTGRES_POOL_IDLE_TIMEOUT_MS: ${env:COLLECTOR_POSTGRES_POOL_IDLE_TIMEOUT_MS, '10000'}
+    COLLECTOR_POSTGRES_POOL_CONNECTION_TIMEOUT_MS: ${env:COLLECTOR_POSTGRES_POOL_CONNECTION_TIMEOUT_MS, '5000'}
+    COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS: ${env:COLLECTOR_MYSQL_POOL_MAX_CONNECTIONS, '5'}
+    COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS: ${env:COLLECTOR_MYSQL_POOL_IDLE_TIMEOUT_MS, '10000'}
+    COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS: ${env:COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS, '5000'}
+    COLLECTOR_MYSQL_QUERY_TIMEOUT_MS: ${env:COLLECTOR_MYSQL_QUERY_TIMEOUT_MS, '5000'}
+    OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL: ${env:OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL, 'https://official-bank.internal/customers/upsert-batch'}
+    OFFICIAL_CUSTOMERS_AUTH_SECRET_ARN: ${env:OFFICIAL_CUSTOMERS_AUTH_SECRET_ARN, ''}
+    OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS: ${env:OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS, '5000'}
+    OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS, '3'}
+    OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS, '200'}
+    OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE, '2'}
+    COLLECTOR_IDEMPOTENCY_TTL_SECONDS: ${env:COLLECTOR_IDEMPOTENCY_TTL_SECONDS, '604800'}
+    CONSUMER_IDEMPOTENCY_TTL_SECONDS: ${env:CONSUMER_IDEMPOTENCY_TTL_SECONDS, '604800'}
+    INTEGRATION_API_TIMEOUT_MS: ${env:INTEGRATION_API_TIMEOUT_MS, '5000'}
+    METRICS_NAMESPACE: ${env:METRICS_NAMESPACE, 'AlertOrchestrationService/Runtime'}
+    INTEGRATION_TARGETS: ${env:INTEGRATION_TARGETS, 'salesforce|hubspot'}
     CLIENT_EVENTS_TOPIC_ARN:
       Ref: ClientEventsTopic
     SALESFORCE_INTEGRATION_QUEUE_URL:
@@ -40,20 +69,34 @@ provider:
       Fn::GetAtt:
         - HubspotIntegrationDlq
         - Arn
+    SALESFORCE_INTEGRATION_AUTH_SECRET_ARN: ${env:SALESFORCE_INTEGRATION_AUTH_SECRET_ARN, ''}
+    HUBSPOT_INTEGRATION_AUTH_SECRET_ARN: ${env:HUBSPOT_INTEGRATION_AUTH_SECRET_ARN, ''}
   stackTags:
     Service: ${self:service}
     Stage: ${self:provider.stage}
     ManagedBy: serverless-framework
 
 custom:
+  auth:
+    sourceRegistryReadScope: sources:read
+    sourceRegistryWriteScope: sources:write
   naming:
     prefix: ${self:service}-${self:provider.stage}
     schedulerFunctionName: ${self:custom.naming.prefix}-scheduler
+    createSourceFunctionName: ${self:custom.naming.prefix}-create-source
+    updateSourceFunctionName: ${self:custom.naming.prefix}-update-source
+    deleteSourceFunctionName: ${self:custom.naming.prefix}-delete-source
+    listSourceFunctionName: ${self:custom.naming.prefix}-list-sources
     orchestrationStateMachineName: ${self:custom.naming.prefix}-orchestration
     orchestrationScheduleRuleName: ${self:custom.naming.prefix}-orchestration-schedule
+    orchestrationLogGroupName: /aws/vendedlogs/states/${self:custom.naming.orchestrationStateMachineName}
+    orchestrationDashboardName: ${self:custom.naming.prefix}-orchestration-observability
     schedulerRoleName: ${self:custom.naming.prefix}-scheduler-role
+    sourceRegistryApiRoleName: ${self:custom.naming.prefix}-source-registry-api-role
     stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role
     collectorRoleName: ${self:custom.naming.prefix}-collector-role
+    salesforceConsumerFunctionName: ${self:custom.naming.prefix}-salesforce-consumer
+    hubspotConsumerFunctionName: ${self:custom.naming.prefix}-hubspot-consumer
     salesforceConsumerRoleName: ${self:custom.naming.prefix}-salesforce-consumer-role
     hubspotConsumerRoleName: ${self:custom.naming.prefix}-hubspot-consumer-role
   stages:
@@ -61,49 +104,136 @@ custom:
       region: us-east-1
       logRetentionInDays: 7
       tracing: false
+      schedulerMemorySize: 256
+      schedulerTimeoutSeconds: 45
+      collectorMemorySize: 512
+      collectorTimeoutSeconds: 90
+      consumerMemorySize: 256
+      consumerTimeoutSeconds: 45
+      sourceRegistryApiMemorySize: 256
+      sourceRegistryApiTimeoutSeconds: 20
+      sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_DEV, 'https://auth.dev.alert-orchestration.internal'}
+      sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_DEV, 'alert-orchestration-service-dev-source-registry-api'}
       sourcesTableName: ${self:service}-dev-sources
       cursorsTableName: ${self:service}-dev-cursors
+      idempotencyTableName: ${self:service}-dev-idempotency
       clientEventsTopicName: ${self:service}-dev-client-events
       salesforceQueueName: ${self:service}-dev-salesforce-events
       hubspotQueueName: ${self:service}-dev-hubspot-events
+      salesforceIntegrationTargetBaseUrl: ${env:SALESFORCE_INTEGRATION_TARGET_BASE_URL_DEV, 'https://salesforce.dev.internal'}
+      hubspotIntegrationTargetBaseUrl: ${env:HUBSPOT_INTEGRATION_TARGET_BASE_URL_DEV, 'https://hubspot.dev.internal'}
       integrationQueueMessageRetentionSeconds: 1209600
       salesforceDlqName: ${self:service}-dev-salesforce-events-dlq
       hubspotDlqName: ${self:service}-dev-hubspot-events-dlq
       integrationDlqMessageRetentionSeconds: 1209600
-      salesforceQueueMaxReceiveCount: 5
-      hubspotQueueMaxReceiveCount: 5
+      dlqAlarmTopicName: ${self:service}-dev-dlq-alarms
+      salesforceDlqAlarmThreshold: 1
+      hubspotDlqAlarmThreshold: 1
+      dlqAlarmPeriodSeconds: 60
+      dlqAlarmEvaluationPeriods: 1
+      operationalAlarmTopicName: ${self:service}-dev-operational-alarms
+      operationalAlarmPeriodSeconds: 60
+      operationalAlarmEvaluationPeriods: 1
+      lambdaErrorAlarmThreshold: 1
+      schedulerDurationAlarmThresholdMs: 25000
+      collectorDurationAlarmThresholdMs: 50000
+      consumerDurationAlarmThresholdMs: 25000
+      orchestrationFailureAlarmThreshold: 1
+      orchestrationTimeoutAlarmThreshold: 1
+      orchestrationDurationP95AlarmThresholdMs: 300000
+      salesforceQueueMaxReceiveCount: 3
+      hubspotQueueMaxReceiveCount: 3
+      mapMaxConcurrency: 2
       orchestrationScheduleExpression: cron(0/30 * * * ? *)
     stg:
       region: us-east-1
       logRetentionInDays: 14
       tracing: true
+      schedulerMemorySize: 256
+      schedulerTimeoutSeconds: 45
+      collectorMemorySize: 768
+      collectorTimeoutSeconds: 90
+      consumerMemorySize: 384
+      consumerTimeoutSeconds: 45
+      sourceRegistryApiMemorySize: 256
+      sourceRegistryApiTimeoutSeconds: 20
+      sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_STG, 'https://auth.stg.alert-orchestration.internal'}
+      sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_STG, 'alert-orchestration-service-stg-source-registry-api'}
       sourcesTableName: ${self:service}-stg-sources
       cursorsTableName: ${self:service}-stg-cursors
+      idempotencyTableName: ${self:service}-stg-idempotency
       clientEventsTopicName: ${self:service}-stg-client-events
       salesforceQueueName: ${self:service}-stg-salesforce-events
       hubspotQueueName: ${self:service}-stg-hubspot-events
+      salesforceIntegrationTargetBaseUrl: ${env:SALESFORCE_INTEGRATION_TARGET_BASE_URL_STG, 'https://salesforce.stg.internal'}
+      hubspotIntegrationTargetBaseUrl: ${env:HUBSPOT_INTEGRATION_TARGET_BASE_URL_STG, 'https://hubspot.stg.internal'}
       integrationQueueMessageRetentionSeconds: 1209600
       salesforceDlqName: ${self:service}-stg-salesforce-events-dlq
       hubspotDlqName: ${self:service}-stg-hubspot-events-dlq
       integrationDlqMessageRetentionSeconds: 1209600
+      dlqAlarmTopicName: ${self:service}-stg-dlq-alarms
+      salesforceDlqAlarmThreshold: 1
+      hubspotDlqAlarmThreshold: 1
+      dlqAlarmPeriodSeconds: 60
+      dlqAlarmEvaluationPeriods: 1
+      operationalAlarmTopicName: ${self:service}-stg-operational-alarms
+      operationalAlarmPeriodSeconds: 60
+      operationalAlarmEvaluationPeriods: 1
+      lambdaErrorAlarmThreshold: 1
+      schedulerDurationAlarmThresholdMs: 25000
+      collectorDurationAlarmThresholdMs: 50000
+      consumerDurationAlarmThresholdMs: 25000
+      orchestrationFailureAlarmThreshold: 1
+      orchestrationTimeoutAlarmThreshold: 1
+      orchestrationDurationP95AlarmThresholdMs: 300000
       salesforceQueueMaxReceiveCount: 5
       hubspotQueueMaxReceiveCount: 5
+      mapMaxConcurrency: 5
       orchestrationScheduleExpression: cron(0/15 * * * ? *)
     prod:
       region: us-east-1
       logRetentionInDays: 30
       tracing: true
+      schedulerMemorySize: 384
+      schedulerTimeoutSeconds: 60
+      collectorMemorySize: 1024
+      collectorTimeoutSeconds: 120
+      consumerMemorySize: 512
+      consumerTimeoutSeconds: 60
+      sourceRegistryApiMemorySize: 384
+      sourceRegistryApiTimeoutSeconds: 25
+      sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_PROD, 'https://auth.alert-orchestration.internal'}
+      sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_PROD, 'alert-orchestration-service-prod-source-registry-api'}
       sourcesTableName: ${self:service}-prod-sources
       cursorsTableName: ${self:service}-prod-cursors
+      idempotencyTableName: ${self:service}-prod-idempotency
       clientEventsTopicName: ${self:service}-prod-client-events
       salesforceQueueName: ${self:service}-prod-salesforce-events
       hubspotQueueName: ${self:service}-prod-hubspot-events
+      salesforceIntegrationTargetBaseUrl: ${env:SALESFORCE_INTEGRATION_TARGET_BASE_URL_PROD, 'https://salesforce.internal'}
+      hubspotIntegrationTargetBaseUrl: ${env:HUBSPOT_INTEGRATION_TARGET_BASE_URL_PROD, 'https://hubspot.internal'}
       integrationQueueMessageRetentionSeconds: 1209600
       salesforceDlqName: ${self:service}-prod-salesforce-events-dlq
       hubspotDlqName: ${self:service}-prod-hubspot-events-dlq
       integrationDlqMessageRetentionSeconds: 1209600
-      salesforceQueueMaxReceiveCount: 5
-      hubspotQueueMaxReceiveCount: 5
+      dlqAlarmTopicName: ${self:service}-prod-dlq-alarms
+      salesforceDlqAlarmThreshold: 5
+      hubspotDlqAlarmThreshold: 5
+      dlqAlarmPeriodSeconds: 60
+      dlqAlarmEvaluationPeriods: 1
+      operationalAlarmTopicName: ${self:service}-prod-operational-alarms
+      operationalAlarmPeriodSeconds: 60
+      operationalAlarmEvaluationPeriods: 1
+      lambdaErrorAlarmThreshold: 2
+      schedulerDurationAlarmThresholdMs: 25000
+      collectorDurationAlarmThresholdMs: 50000
+      consumerDurationAlarmThresholdMs: 25000
+      orchestrationFailureAlarmThreshold: 2
+      orchestrationTimeoutAlarmThreshold: 1
+      orchestrationDurationP95AlarmThresholdMs: 420000
+      salesforceQueueMaxReceiveCount: 8
+      hubspotQueueMaxReceiveCount: 8
+      mapMaxConcurrency: 10
       orchestrationScheduleExpression: cron(0/5 * * * ? *)
 
 plugins:
@@ -114,12 +244,136 @@ functions:
     name: ${self:custom.naming.schedulerFunctionName}
     handler: dist/handlers/scheduler.handler
     description: Lista fontes elegiveis para processamento incremental.
-    memorySize: 256
-    timeout: 30
+    memorySize: ${self:custom.stages.${self:provider.stage}.schedulerMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.schedulerTimeoutSeconds}
     role:
       Fn::GetAtt:
         - SchedulerExecutionRole
         - Arn
+  collector:
+    name: ${self:custom.naming.prefix}-collector
+    handler: dist/handlers/collector.handler
+    description: Coletora generica acionada por sourceId em cada iteracao do Map State.
+    memorySize: ${self:custom.stages.${self:provider.stage}.collectorMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.collectorTimeoutSeconds}
+    role:
+      Fn::GetAtt:
+        - CollectorExecutionRole
+        - Arn
+  salesforceConsumer:
+    name: ${self:custom.naming.salesforceConsumerFunctionName}
+    handler: dist/handlers/salesforce-consumer.handler
+    description: Consumidora dedicada para entrega de eventos de clientes na integracao Salesforce.
+    memorySize: ${self:custom.stages.${self:provider.stage}.consumerMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.consumerTimeoutSeconds}
+    role:
+      Fn::GetAtt:
+        - SalesforceConsumerExecutionRole
+        - Arn
+    environment:
+      INTEGRATION_NAME: salesforce
+      SALESFORCE_INTEGRATION_TARGET_BASE_URL: ${self:custom.stages.${self:provider.stage}.salesforceIntegrationTargetBaseUrl}
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - SalesforceIntegrationQueue
+              - Arn
+          batchSize: 10
+          functionResponseType: ReportBatchItemFailures
+  hubspotConsumer:
+    name: ${self:custom.naming.hubspotConsumerFunctionName}
+    handler: dist/handlers/hubspot-consumer.handler
+    description: Consumidora dedicada para entrega de eventos de clientes na integracao HubSpot.
+    memorySize: ${self:custom.stages.${self:provider.stage}.consumerMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.consumerTimeoutSeconds}
+    role:
+      Fn::GetAtt:
+        - HubspotConsumerExecutionRole
+        - Arn
+    environment:
+      INTEGRATION_NAME: hubspot
+      HUBSPOT_INTEGRATION_TARGET_BASE_URL: ${self:custom.stages.${self:provider.stage}.hubspotIntegrationTargetBaseUrl}
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - HubspotIntegrationQueue
+              - Arn
+          batchSize: 10
+          functionResponseType: ReportBatchItemFailures
+  createSource:
+    name: ${self:custom.naming.createSourceFunctionName}
+    handler: dist/handlers/create-source.handler
+    description: Endpoint POST para registro de novas fontes no plugin registry.
+    memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}
+    role:
+      Fn::GetAtt:
+        - SourceRegistryApiExecutionRole
+        - Arn
+    events:
+      - httpApi:
+          method: post
+          path: /sources
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - ${self:custom.auth.sourceRegistryWriteScope}
+  updateSource:
+    name: ${self:custom.naming.updateSourceFunctionName}
+    handler: dist/handlers/update-source.handler
+    description: Endpoint PATCH para atualizacao parcial de fontes no plugin registry.
+    memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}
+    role:
+      Fn::GetAtt:
+        - SourceRegistryApiExecutionRole
+        - Arn
+    events:
+      - httpApi:
+          method: patch
+          path: /sources/{id}
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - ${self:custom.auth.sourceRegistryWriteScope}
+  deleteSource:
+    name: ${self:custom.naming.deleteSourceFunctionName}
+    handler: dist/handlers/delete-source.handler
+    description: Endpoint DELETE para desativacao logica de fontes no plugin registry.
+    memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}
+    role:
+      Fn::GetAtt:
+        - SourceRegistryApiExecutionRole
+        - Arn
+    events:
+      - httpApi:
+          method: delete
+          path: /sources/{id}
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - ${self:custom.auth.sourceRegistryWriteScope}
+  listSource:
+    name: ${self:custom.naming.listSourceFunctionName}
+    handler: dist/handlers/list-sources.handler
+    description: Endpoint GET para listagem paginada de fontes no plugin registry.
+    memorySize: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiMemorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.sourceRegistryApiTimeoutSeconds}
+    role:
+      Fn::GetAtt:
+        - SourceRegistryApiExecutionRole
+        - Arn
+    events:
+      - httpApi:
+          method: get
+          path: /sources
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - ${self:custom.auth.sourceRegistryReadScope}
 
 stepFunctions:
   stateMachines:
@@ -140,6 +394,13 @@ stepFunctions:
         Fn::GetAtt:
           - MainStateMachineExecutionRole
           - Arn
+      tracingConfig:
+        enabled: ${self:custom.stages.${self:provider.stage}.tracing}
+      loggingConfig:
+        level: ALL
+        includeExecutionData: true
+        destinations:
+          - Fn::Sub: ${MainOrchestrationStateMachineLogGroup.Arn}:*
       definition: ${file(./state-machines/main-orchestration-v1.asl.json)}
 
 resources:
@@ -148,6 +409,41 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:custom.naming.schedulerFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    CreateSourceLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.createSourceFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    UpdateSourceLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.updateSourceFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    DeleteSourceLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.deleteSourceFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    ListSourceLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.listSourceFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    SalesforceConsumerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.salesforceConsumerFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    HubspotConsumerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.hubspotConsumerFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    MainOrchestrationStateMachineLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: ${self:custom.naming.orchestrationLogGroupName}
         RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
     SchedulerExecutionRole:
       Type: AWS::IAM::Role
@@ -217,7 +513,34 @@ resources:
                     - Fn::GetAtt:
                         - SchedulerLambdaFunction
                         - Arn
-                    - Fn::Sub: ${SchedulerLambdaFunction.Arn}:*
+                - Sid: InvokeCollectorLambda
+                  Effect: Allow
+                  Action:
+                    - lambda:InvokeFunction
+                  Resource:
+                    - Fn::GetAtt:
+                        - CollectorLambdaFunction
+                        - Arn
+                - Sid: DeliverStepFunctionsExecutionLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogDelivery
+                    - logs:GetLogDelivery
+                    - logs:UpdateLogDelivery
+                    - logs:DeleteLogDelivery
+                    - logs:ListLogDeliveries
+                    - logs:PutResourcePolicy
+                    - logs:DescribeResourcePolicies
+                    - logs:DescribeLogGroups
+                  Resource: '*'
+                - Sid: PublishOrchestrationMetrics
+                  Effect: Allow
+                  Action:
+                    - cloudwatch:PutMetricData
+                  Resource: '*'
+                  Condition:
+                    StringEquals:
+                      cloudwatch:namespace: AlertOrchestrationService/Orchestration
     CollectorExecutionRole:
       Type: AWS::IAM::Role
       Properties:
@@ -240,7 +563,6 @@ resources:
                   Effect: Allow
                   Action:
                     - dynamodb:GetItem
-                    - dynamodb:Query
                   Resource:
                     - Fn::GetAtt:
                         - SourcesTable
@@ -255,12 +577,72 @@ resources:
                     - Fn::GetAtt:
                         - CursorsTable
                         - Arn
+                - Sid: WriteIdempotencyClaims
+                  Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - IdempotencyTable
+                        - Arn
                 - Sid: PublishClientEvents
                   Effect: Allow
                   Action:
                     - sns:Publish
                   Resource:
                     - Ref: ClientEventsTopic
+                - Sid: ReadSourceSecrets
+                  Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
+                - Sid: PublishCollectorRuntimeMetrics
+                  Effect: Allow
+                  Action:
+                    - cloudwatch:PutMetricData
+                  Resource: '*'
+                  Condition:
+                    StringEquals:
+                      cloudwatch:namespace: ${env:METRICS_NAMESPACE, 'AlertOrchestrationService/Runtime'}
+    SourceRegistryApiExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.naming.sourceRegistryApiRoleName}
+        Description: Role da API de fontes com privilegio minimo para CRUD da tabela sources.
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:custom.naming.prefix}-source-registry-api-dynamodb-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: CreateSource
+                  Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:Scan
+                  Resource:
+                    - Fn::GetAtt:
+                        - SourcesTable
+                        - Arn
+                - Sid: WriteSourceRegistryApiLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.createSourceFunctionName}:*
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.updateSourceFunctionName}:*
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.deleteSourceFunctionName}:*
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.listSourceFunctionName}:*
     SalesforceConsumerExecutionRole:
       Type: AWS::IAM::Role
       Properties:
@@ -290,6 +672,36 @@ resources:
                     - Fn::GetAtt:
                         - SalesforceIntegrationQueue
                         - Arn
+                - Sid: WriteSalesforceConsumerLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.salesforceConsumerFunctionName}:*
+                - Sid: WriteSalesforceConsumerIdempotencyClaims
+                  Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - IdempotencyTable
+                        - Arn
+                - Sid: ReadSalesforceOutboundAuthSecret
+                  Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
+                - Sid: PublishSalesforceRuntimeMetrics
+                  Effect: Allow
+                  Action:
+                    - cloudwatch:PutMetricData
+                  Resource: '*'
+                  Condition:
+                    StringEquals:
+                      cloudwatch:namespace: ${env:METRICS_NAMESPACE, 'AlertOrchestrationService/Runtime'}
     HubspotConsumerExecutionRole:
       Type: AWS::IAM::Role
       Properties:
@@ -319,6 +731,36 @@ resources:
                     - Fn::GetAtt:
                         - HubspotIntegrationQueue
                         - Arn
+                - Sid: WriteHubspotConsumerLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.hubspotConsumerFunctionName}:*
+                - Sid: WriteHubspotConsumerIdempotencyClaims
+                  Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - IdempotencyTable
+                        - Arn
+                - Sid: ReadHubspotOutboundAuthSecret
+                  Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
+                - Sid: PublishHubspotRuntimeMetrics
+                  Effect: Allow
+                  Action:
+                    - cloudwatch:PutMetricData
+                  Resource: '*'
+                  Condition:
+                    StringEquals:
+                      cloudwatch:namespace: ${env:METRICS_NAMESPACE, 'AlertOrchestrationService/Runtime'}
     SourcesTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -357,6 +799,22 @@ resources:
         KeySchema:
           - AttributeName: source
             KeyType: HASH
+        SSESpecification:
+          SSEEnabled: true
+    IdempotencyTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.stages.${self:provider.stage}.idempotencyTableName}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: deduplicationKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: deduplicationKey
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: true
         SSESpecification:
           SSEEnabled: true
     ClientEventsTopic:
@@ -503,6 +961,365 @@ resources:
             - HubspotIntegrationQueue
             - Arn
         RawMessageDelivery: true
+    DlqAlarmTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.stages.${self:provider.stage}.dlqAlarmTopicName}
+        KmsMasterKeyId: alias/aws/sns
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+          - Key: Scope
+            Value: dlq-alarms
+    SalesforceIntegrationDlqVisibleMessagesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-salesforce-dlq-visible-messages
+        AlarmDescription: Alarm when Salesforce DLQ accumulates visible messages above threshold.
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt:
+                - SalesforceIntegrationDlq
+                - QueueName
+        Statistic: Maximum
+        Period: ${self:custom.stages.${self:provider.stage}.dlqAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.dlqAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.salesforceDlqAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: DlqAlarmTopic
+        OKActions:
+          - Ref: DlqAlarmTopic
+    HubspotIntegrationDlqVisibleMessagesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-hubspot-dlq-visible-messages
+        AlarmDescription: Alarm when HubSpot DLQ accumulates visible messages above threshold.
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt:
+                - HubspotIntegrationDlq
+                - QueueName
+        Statistic: Maximum
+        Period: ${self:custom.stages.${self:provider.stage}.dlqAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.dlqAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.hubspotDlqAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: DlqAlarmTopic
+        OKActions:
+          - Ref: DlqAlarmTopic
+    OperationalAlarmTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.stages.${self:provider.stage}.operationalAlarmTopicName}
+        KmsMasterKeyId: alias/aws/sns
+        Tags:
+          - Key: Service
+            Value: ${self:service}
+          - Key: Stage
+            Value: ${self:provider.stage}
+          - Key: Scope
+            Value: operational-alarms
+    SchedulerErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-scheduler-errors
+        AlarmDescription: Alarm when Scheduler Lambda errors exceed threshold.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.schedulerFunctionName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.lambdaErrorAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    SchedulerDurationP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-scheduler-duration-p95-high
+        AlarmDescription: Alarm when Scheduler Lambda p95 duration exceeds expected threshold.
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.schedulerFunctionName}
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.schedulerDurationAlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    CollectorErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-collector-errors
+        AlarmDescription: Alarm when Collector Lambda errors exceed threshold.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.prefix}-collector
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.lambdaErrorAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    CollectorDurationP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-collector-duration-p95-high
+        AlarmDescription: Alarm when Collector Lambda p95 duration exceeds expected threshold.
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.prefix}-collector
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.collectorDurationAlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    SalesforceConsumerErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-salesforce-consumer-errors
+        AlarmDescription: Alarm when Salesforce consumer Lambda errors exceed threshold.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.salesforceConsumerFunctionName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.lambdaErrorAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    SalesforceConsumerDurationP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-salesforce-consumer-duration-p95-high
+        AlarmDescription: Alarm when Salesforce consumer Lambda p95 duration exceeds expected threshold.
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.salesforceConsumerFunctionName}
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.consumerDurationAlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    HubspotConsumerErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-hubspot-consumer-errors
+        AlarmDescription: Alarm when HubSpot consumer Lambda errors exceed threshold.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.hubspotConsumerFunctionName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.lambdaErrorAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    HubspotConsumerDurationP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-hubspot-consumer-duration-p95-high
+        AlarmDescription: Alarm when HubSpot consumer Lambda p95 duration exceeds expected threshold.
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:custom.naming.hubspotConsumerFunctionName}
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.consumerDurationAlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    MainOrchestrationExecutionsFailedAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-orchestration-executions-failed
+        AlarmDescription: Alarm when main orchestration executions fail.
+        Namespace: AWS/States
+        MetricName: ExecutionsFailed
+        Dimensions:
+          - Name: StateMachineArn
+            Value:
+              Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.orchestrationFailureAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    MainOrchestrationExecutionsTimedOutAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-orchestration-executions-timed-out
+        AlarmDescription: Alarm when main orchestration executions time out.
+        Namespace: AWS/States
+        MetricName: ExecutionsTimedOut
+        Dimensions:
+          - Name: StateMachineArn
+            Value:
+              Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}
+        Statistic: Sum
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.orchestrationTimeoutAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    MainOrchestrationExecutionTimeP95HighAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:custom.naming.prefix}-orchestration-execution-time-p95-high
+        AlarmDescription: Alarm when main orchestration p95 execution time exceeds expected threshold.
+        Namespace: AWS/States
+        MetricName: ExecutionTime
+        Dimensions:
+          - Name: StateMachineArn
+            Value:
+              Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}
+        ExtendedStatistic: p95
+        Period: ${self:custom.stages.${self:provider.stage}.operationalAlarmPeriodSeconds}
+        EvaluationPeriods: ${self:custom.stages.${self:provider.stage}.operationalAlarmEvaluationPeriods}
+        Threshold: ${self:custom.stages.${self:provider.stage}.orchestrationDurationP95AlarmThresholdMs}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - Ref: OperationalAlarmTopic
+        OKActions:
+          - Ref: OperationalAlarmTopic
+    MainOrchestrationObservabilityDashboard:
+      Type: AWS::CloudWatch::Dashboard
+      Properties:
+        DashboardName: ${self:custom.naming.orchestrationDashboardName}
+        DashboardBody:
+          Fn::Sub: |
+            {
+              "widgets": [
+                {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 0,
+                  "width": 24,
+                  "height": 6,
+                  "properties": {
+                    "title": "State Machine executions (success x failure)",
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "period": 300,
+                    "metrics": [
+                      ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}", {"stat": "Sum", "label": "Succeeded"}],
+                      [".", "ExecutionsFailed", ".", ".", {"stat": "Sum", "label": "Failed"}]
+                    ]
+                  }
+                },
+                {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 6,
+                  "width": 24,
+                  "height": 6,
+                  "properties": {
+                    "title": "State Machine duration (ExecutionTime)",
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "period": 300,
+                    "metrics": [
+                      ["AWS/States", "ExecutionTime", "StateMachineArn", "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${self:custom.naming.orchestrationStateMachineName}", {"stat": "Average", "label": "Avg duration (ms)"}],
+                      [".", "ExecutionTime", ".", ".", {"stat": "p95", "label": "p95 duration (ms)"}]
+                    ]
+                  }
+                },
+                {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 12,
+                  "width": 24,
+                  "height": 6,
+                  "properties": {
+                    "title": "Orchestration custom metrics",
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "period": 300,
+                    "metrics": [
+                      ["AlertOrchestrationService/Orchestration", "ExecutionSucceeded", "Stage", "${self:provider.stage}", {"stat": "Sum"}],
+                      [".", "ExecutionFailed", "Stage", "${self:provider.stage}", {"stat": "Sum"}],
+                      [".", "SourceProcessed", "Stage", "${self:provider.stage}", {"stat": "Sum"}],
+                      [".", "SourceFailed", "Stage", "${self:provider.stage}", {"stat": "Sum"}]
+                    ]
+                  }
+                }
+              ]
+            }
   Outputs:
     MainStateMachineName:
       Description: Nome da state machine principal.
@@ -539,6 +1356,14 @@ resources:
           - Arn
       Export:
         Name: ${self:custom.naming.prefix}-collector-execution-role-arn
+    SourceRegistryApiExecutionRoleArn:
+      Description: ARN da role de execucao da API de cadastro de fontes.
+      Value:
+        Fn::GetAtt:
+          - SourceRegistryApiExecutionRole
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-source-registry-api-execution-role-arn
     SalesforceConsumerExecutionRoleArn:
       Description: ARN da role reservada para a consumidora Salesforce.
       Value:
@@ -635,3 +1460,119 @@ resources:
         Ref: HubspotIntegrationSubscription
       Export:
         Name: ${self:custom.naming.prefix}-hubspot-integration-subscription-arn
+    DlqAlarmTopicArn:
+      Description: ARN do topico SNS de notificacoes de alarmes de DLQ.
+      Value:
+        Ref: DlqAlarmTopic
+      Export:
+        Name: ${self:custom.naming.prefix}-dlq-alarm-topic-arn
+    SalesforceIntegrationDlqVisibleMessagesAlarmName:
+      Description: Nome do alarme de mensagens visiveis na DLQ Salesforce.
+      Value:
+        Ref: SalesforceIntegrationDlqVisibleMessagesAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-dlq-visible-messages-alarm-name
+    SalesforceIntegrationDlqVisibleMessagesAlarmArn:
+      Description: ARN do alarme de mensagens visiveis na DLQ Salesforce.
+      Value:
+        Fn::GetAtt:
+          - SalesforceIntegrationDlqVisibleMessagesAlarm
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-dlq-visible-messages-alarm-arn
+    HubspotIntegrationDlqVisibleMessagesAlarmName:
+      Description: Nome do alarme de mensagens visiveis na DLQ HubSpot.
+      Value:
+        Ref: HubspotIntegrationDlqVisibleMessagesAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-dlq-visible-messages-alarm-name
+    HubspotIntegrationDlqVisibleMessagesAlarmArn:
+      Description: ARN do alarme de mensagens visiveis na DLQ HubSpot.
+      Value:
+        Fn::GetAtt:
+          - HubspotIntegrationDlqVisibleMessagesAlarm
+          - Arn
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-dlq-visible-messages-alarm-arn
+    OperationalAlarmTopicArn:
+      Description: ARN do topico SNS de notificacoes dos alarmes operacionais.
+      Value:
+        Ref: OperationalAlarmTopic
+      Export:
+        Name: ${self:custom.naming.prefix}-operational-alarm-topic-arn
+    SchedulerErrorsAlarmName:
+      Description: Nome do alarme de erros da Lambda Scheduler.
+      Value:
+        Ref: SchedulerErrorsAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-scheduler-errors-alarm-name
+    SchedulerDurationP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da Lambda Scheduler.
+      Value:
+        Ref: SchedulerDurationP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-scheduler-duration-p95-high-alarm-name
+    CollectorErrorsAlarmName:
+      Description: Nome do alarme de erros da Lambda coletora.
+      Value:
+        Ref: CollectorErrorsAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-collector-errors-alarm-name
+    CollectorDurationP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da Lambda coletora.
+      Value:
+        Ref: CollectorDurationP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-collector-duration-p95-high-alarm-name
+    SalesforceConsumerErrorsAlarmName:
+      Description: Nome do alarme de erros da consumidora Salesforce.
+      Value:
+        Ref: SalesforceConsumerErrorsAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-consumer-errors-alarm-name
+    SalesforceConsumerDurationP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da consumidora Salesforce.
+      Value:
+        Ref: SalesforceConsumerDurationP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-salesforce-consumer-duration-p95-high-alarm-name
+    HubspotConsumerErrorsAlarmName:
+      Description: Nome do alarme de erros da consumidora HubSpot.
+      Value:
+        Ref: HubspotConsumerErrorsAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-consumer-errors-alarm-name
+    HubspotConsumerDurationP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da consumidora HubSpot.
+      Value:
+        Ref: HubspotConsumerDurationP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-hubspot-consumer-duration-p95-high-alarm-name
+    MainOrchestrationExecutionsFailedAlarmName:
+      Description: Nome do alarme de falha de execucao da state machine principal.
+      Value:
+        Ref: MainOrchestrationExecutionsFailedAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-orchestration-executions-failed-alarm-name
+    MainOrchestrationExecutionsTimedOutAlarmName:
+      Description: Nome do alarme de timeout de execucao da state machine principal.
+      Value:
+        Ref: MainOrchestrationExecutionsTimedOutAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-orchestration-executions-timed-out-alarm-name
+    MainOrchestrationExecutionTimeP95HighAlarmName:
+      Description: Nome do alarme de p95 de duracao da state machine principal.
+      Value:
+        Ref: MainOrchestrationExecutionTimeP95HighAlarm
+      Export:
+        Name: ${self:custom.naming.prefix}-orchestration-execution-time-p95-high-alarm-name
+    MainOrchestrationStateMachineLogGroupName:
+      Description: Nome do log group da state machine principal.
+      Value: ${self:custom.naming.orchestrationLogGroupName}
+      Export:
+        Name: ${self:custom.naming.prefix}-main-state-machine-log-group-name
+    MainOrchestrationObservabilityDashboardName:
+      Description: Nome do dashboard de observabilidade da orquestracao.
+      Value: ${self:custom.naming.orchestrationDashboardName}
+      Export:
+        Name: ${self:custom.naming.prefix}-orchestration-observability-dashboard-name

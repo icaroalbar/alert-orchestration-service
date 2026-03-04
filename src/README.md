@@ -21,7 +21,14 @@
 ```text
 src/
   handlers/
+    create-source.ts
+    delete-source.ts
+    list-sources.ts
+    update-source.ts
   domain/
+    scheduler/
+    sources/
   infra/
+    sources/
   shared/
 ```

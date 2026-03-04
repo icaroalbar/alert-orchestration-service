@@ -14,9 +14,14 @@ jobs:
           script: |
             const body = context.payload.pull_request.body || "";
             const errors = [];
+            const closesRegex = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+\b/i;
 
-            if (!/Closes #\d+/.test(body)) {
-              errors.push("PR deve conter Closes #<issue>.");
+            if (!closesRegex.test(body)) {
+              errors.push("PR deve conter referência de fechamento de issue: Closes/Fixes/Resolves #<issue>.");
+            }
+
+            if (/\b(?:Closes|Fixes|Resolves)\s+#<issue_number>\b/i.test(body)) {
+              errors.push("Substitua o placeholder do template por número real de issue.");
             }
 
             if (!body.includes("## 🧪 BDD")) {

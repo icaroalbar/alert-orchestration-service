@@ -6,6 +6,8 @@ Endpoint para cadastro de novas fontes no plugin registry.
 
 - Método: `POST`
 - Path: `/sources`
+- Header obrigatório: `Authorization: Bearer <jwt>`
+- Scope obrigatório: `sources:write`
 - Body: contrato `SourceSchemaV1` (ver `docs/sources/source-schema-v1.md`).
 
 ## Responses
@@ -27,6 +29,14 @@ Endpoint para cadastro de novas fontes no plugin registry.
 ### `400 Bad Request`
 
 Body ausente, JSON inválido ou payload inválido conforme regras de `SourceSchemaV1` (campos obrigatórios, formatos e condicionais).
+
+### `401 Unauthorized`
+
+Token JWT ausente, expirado ou inválido no `Authorization`.
+
+### `403 Forbidden`
+
+Token válido sem o scope `sources:write`.
 
 ### `409 Conflict`
 

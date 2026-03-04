@@ -99,6 +99,20 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Stage `prod`: `10`
   - Limites aceitos em runtime: inteiro entre `1` e `40`.
   - Fallback no scheduler quando ausente: `5`.
+- API de fontes protegida por JWT Authorizer no HTTP API:
+  - Header obrigatório: `Authorization: Bearer <jwt>`.
+  - Configuração por stage:
+    - `sourceRegistryJwtIssuerUrl`
+    - `sourceRegistryJwtAudience`
+  - Overrides por ambiente (opcionais):
+    - `SOURCE_REGISTRY_JWT_ISSUER_URL_DEV|STG|PROD`
+    - `SOURCE_REGISTRY_JWT_AUDIENCE_DEV|STG|PROD`
+  - Escopos mínimos por operação:
+    - `GET /sources` requer `sources:read`.
+    - `POST /sources`, `PATCH /sources/{id}`, `DELETE /sources/{id}` requerem `sources:write`.
+  - Contrato de erro de auth no gateway:
+    - `401` para token ausente/inválido.
+    - `403` para token sem escopo exigido.
 - Definição da state machine principal versionada em `state-machines/main-orchestration-v1.asl.json`.
 - Contratos de entrada/saída por estado documentados em `docs/step-functions/main-orchestration-v1.md`.
 - Retry com backoff exponencial configurado na state machine para tasks críticas:

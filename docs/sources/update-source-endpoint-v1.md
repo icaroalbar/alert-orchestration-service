@@ -8,6 +8,8 @@ Atualizar parcialmente uma fonte já cadastrada no plugin registry, preservando 
 
 - Método: `PATCH`
 - Rota: `/sources/{id}`
+- Header obrigatório: `Authorization: Bearer <jwt>`
+- Scope obrigatório: `sources:write`
 - `pathParameters.id`: identificador da fonte (`sourceId`)
 - Body: JSON com ao menos um campo mutável
 
@@ -56,3 +58,7 @@ A atualização usa optimistic locking em `updatedAt`:
 - `400 Bad Request`
   - `message: Source payload validation failed.`
   - `errors[]`
+- `401 Unauthorized`
+  - JWT ausente, expirado ou inválido.
+- `403 Forbidden`
+  - JWT válido sem o scope `sources:write`.

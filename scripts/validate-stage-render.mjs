@@ -28,6 +28,20 @@ const staticFallback = () => {
     'region: ${self:custom.stages.${self:provider.stage}.region}',
     'logRetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}',
     'lambda: ${self:custom.stages.${self:provider.stage}.tracing}',
+    'httpApi:',
+    'authorizers:',
+    'sourceRegistryJwtAuthorizer:',
+    'type: jwt',
+    'identitySource: $request.header.Authorization',
+    'issuerUrl: ${self:custom.stages.${self:provider.stage}.sourceRegistryJwtIssuerUrl}',
+    'sourceRegistryReadScope: sources:read',
+    'sourceRegistryWriteScope: sources:write',
+    "sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_DEV, 'https://auth.dev.alert-orchestration.internal'}",
+    "sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_STG, 'https://auth.stg.alert-orchestration.internal'}",
+    "sourceRegistryJwtIssuerUrl: ${env:SOURCE_REGISTRY_JWT_ISSUER_URL_PROD, 'https://auth.alert-orchestration.internal'}",
+    "sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_DEV, 'alert-orchestration-service-dev-source-registry-api'}",
+    "sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_STG, 'alert-orchestration-service-stg-source-registry-api'}",
+    "sourceRegistryJwtAudience: ${env:SOURCE_REGISTRY_JWT_AUDIENCE_PROD, 'alert-orchestration-service-prod-source-registry-api'}",
     'SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}',
     'CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}',
     'MAP_MAX_CONCURRENCY: ${self:custom.stages.${self:provider.stage}.mapMaxConcurrency}',
@@ -185,11 +199,54 @@ const staticFallback = () => {
     'prod:',
   ];
 
+  const sourceRegistryProtectedRouteSnippets = [
+    `- httpApi:
+          method: post
+          path: /sources
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - \${self:custom.auth.sourceRegistryWriteScope}`,
+    `- httpApi:
+          method: patch
+          path: /sources/{id}
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - \${self:custom.auth.sourceRegistryWriteScope}`,
+    `- httpApi:
+          method: delete
+          path: /sources/{id}
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - \${self:custom.auth.sourceRegistryWriteScope}`,
+    `- httpApi:
+          method: get
+          path: /sources
+          authorizer:
+            name: sourceRegistryJwtAuthorizer
+            scopes:
+              - \${self:custom.auth.sourceRegistryReadScope}`,
+  ];
+
   const missing = checks.filter((check) => !serverless.includes(check));
   if (missing.length > 0) {
     console.error('Falha no fallback estático de stage render:');
     for (const check of missing) {
       console.error(`- Ausente: ${check}`);
+    }
+    process.exit(1);
+  }
+
+  const missingProtectedRoutes = sourceRegistryProtectedRouteSnippets.filter(
+    (snippet) => !serverless.includes(snippet),
+  );
+  if (missingProtectedRoutes.length > 0) {
+    console.error('Falha no fallback estático de stage render: rotas /sources sem auth esperada.');
+    for (const snippet of missingProtectedRoutes) {
+      const firstLine = snippet.split('\n')[0] ?? snippet;
+      console.error(`- Snippet ausente: ${firstLine.trim()}`);
     }
     process.exit(1);
   }

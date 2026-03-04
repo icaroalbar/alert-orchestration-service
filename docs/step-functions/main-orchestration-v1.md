@@ -31,6 +31,9 @@ Payload esperado na execução:
 
 - Entrada: `schedulerInput.now`.
 - Ação: invoca `SchedulerLambdaFunction`.
+- Implementação do scheduler:
+  - Consulta fontes ativas no DynamoDB usando o índice `active-nextRunAt-index`.
+  - Consome páginas de forma incremental (paginação por `LastEvaluatedKey`) para evitar carga total em memória.
 - Retry com backoff exponencial para falhas transitórias:
   - Erros Lambda transitórios (`ServiceException`, `AWSLambdaException`, `SdkClientException`, `TooManyRequestsException`):
     - `IntervalSeconds: 2`

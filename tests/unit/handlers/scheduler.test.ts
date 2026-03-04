@@ -1,8 +1,27 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
 
-import { handler } from '../../../src/handlers/scheduler';
+import type {
+  ListActiveSourcesParams,
+  ListActiveSourcesResult,
+  SourceRepository,
+} from '../../../src/domain/scheduler/list-eligible-sources';
+import { createHandler } from '../../../src/handlers/scheduler';
 
 const ORIGINAL_MAP_MAX_CONCURRENCY = process.env.MAP_MAX_CONCURRENCY;
+
+class SpySourceRepository implements SourceRepository {
+  public readonly calls: ListActiveSourcesParams[] = [];
+  private readonly pages: ListActiveSourcesResult[];
+
+  constructor(pages: ListActiveSourcesResult[]) {
+    this.pages = pages;
+  }
+
+  listActiveSources(params: ListActiveSourcesParams): Promise<ListActiveSourcesResult> {
+    this.calls.push(params);
+    return Promise.resolve(this.pages[this.calls.length - 1] ?? { items: [], nextToken: null });
+  }
+}
 
 afterEach(() => {
   if (ORIGINAL_MAP_MAX_CONCURRENCY === undefined) {
@@ -14,18 +33,58 @@ afterEach(() => {
 });
 
 describe('scheduler handler', () => {
-  it('returns expected payload with default max concurrency', async () => {
+  it('returns expected payload with default max concurrency and paginated sources', async () => {
     delete process.env.MAP_MAX_CONCURRENCY;
-    const result = await handler();
+    const repository = new SpySourceRepository([
+      {
+        items: [
+          { sourceId: 'source-b', nextRunAt: '2026-03-04T09:00:00.000Z' },
+          { sourceId: 'source-a', nextRunAt: '2026-03-04T09:05:00.000Z' },
+        ],
+        nextToken: 'page-2',
+      },
+      {
+        items: [{ sourceId: 'source-c', nextRunAt: '2026-03-04T09:10:00.000Z' }],
+        nextToken: null,
+      },
+    ]);
 
-    expect(result.sourceIds).toEqual([]);
-    expect(typeof result.generatedAt).toBe('string');
-    expect(Number.isNaN(Date.parse(result.generatedAt))).toBe(false);
+    const handler = createHandler({
+      sourceRepository: repository,
+      now: () => '2026-03-04T10:00:00.000Z',
+      activeSourcesPageSize: 2,
+    });
+
+    const result = await handler({
+      now: '2026-03-04T08:00:00.000Z',
+    });
+
+    expect(repository.calls).toEqual([
+      {
+        limit: 2,
+        nextToken: undefined,
+        now: '2026-03-04T08:00:00.000Z',
+      },
+      {
+        limit: 2,
+        nextToken: 'page-2',
+        now: '2026-03-04T08:00:00.000Z',
+      },
+    ]);
+    expect(result.sourceIds).toEqual(['source-b', 'source-a', 'source-c']);
+    expect(result.generatedAt).toBe('2026-03-04T10:00:00.000Z');
     expect(result.maxConcurrency).toBe(5);
   });
 
   it('returns configured max concurrency from environment', async () => {
     process.env.MAP_MAX_CONCURRENCY = '12';
+
+    const repository = new SpySourceRepository([{ items: [], nextToken: null }]);
+    const handler = createHandler({
+      sourceRepository: repository,
+      now: () => '2026-03-04T10:00:00.000Z',
+      activeSourcesPageSize: 10,
+    });
 
     const result = await handler();
 
@@ -34,6 +93,13 @@ describe('scheduler handler', () => {
 
   it('throws on invalid MAP_MAX_CONCURRENCY', async () => {
     process.env.MAP_MAX_CONCURRENCY = '0';
+
+    const repository = new SpySourceRepository([{ items: [], nextToken: null }]);
+    const handler = createHandler({
+      sourceRepository: repository,
+      now: () => '2026-03-04T10:00:00.000Z',
+      activeSourcesPageSize: 10,
+    });
 
     await expect(handler()).rejects.toThrow(
       'Invalid MAP_MAX_CONCURRENCY="0". Expected integer between 1 and 40.',

@@ -16,6 +16,7 @@ import {
   type CollectorSourceCredentials,
 } from '../../../src/domain/collector/load-source-credentials';
 import type { UpsertCustomersBatchResult } from '../../../src/domain/collector/upsert-customers-batch';
+import type { PublishCustomerEventsResult } from '../../../src/infra/events/sns-customer-events-publisher';
 import type { SourceRegistryRecord } from '../../../src/domain/sources/source-registry-repository';
 import { createHandler, type CollectorDependencies } from '../../../src/handlers/collector';
 
@@ -194,6 +195,44 @@ class SpyUpsertCustomersBatchClient {
   };
 }
 
+class SpyCustomerEventsPublisher {
+  public readonly calls: Array<{
+    sourceId: string;
+    correlationId: string;
+    records: readonly CollectorStandardizedRecord[];
+    publishedAt: string;
+  }> = [];
+
+  constructor(
+    private readonly resultFactory: (
+      records: readonly CollectorStandardizedRecord[],
+    ) => PublishCustomerEventsResult = (records) => ({
+      publishedCount: records.length,
+    }),
+  ) {}
+
+  publish = ({
+    sourceId,
+    correlationId,
+    records,
+    publishedAt,
+  }: {
+    sourceId: string;
+    correlationId: string;
+    records: readonly CollectorStandardizedRecord[];
+    publishedAt: string;
+  }): Promise<PublishCustomerEventsResult> => {
+    this.calls.push({
+      sourceId,
+      correlationId,
+      records,
+      publishedAt,
+    });
+
+    return Promise.resolve(this.resultFactory(records));
+  };
+}
+
 const DEFAULT_SECRET_RETRY_POLICY: CollectorSecretRetryPolicy = {
   maxAttempts: 3,
   baseDelayMs: 10,
@@ -207,6 +246,7 @@ const createCollectorHandler = ({
   postgresQueryExecutorFactory,
   mySqlQueryExecutorFactory = new SpyMySqlQueryExecutorFactory([]),
   upsertCustomersBatchClient = new SpyUpsertCustomersBatchClient(),
+  customerEventsPublisher = new SpyCustomerEventsPublisher(),
   logger,
 }: {
   sourceRegistryRepository: SpySourceRegistryRepository;
@@ -215,6 +255,7 @@ const createCollectorHandler = ({
   postgresQueryExecutorFactory: SpyPostgresQueryExecutorFactory;
   mySqlQueryExecutorFactory?: SpyMySqlQueryExecutorFactory;
   upsertCustomersBatchClient?: SpyUpsertCustomersBatchClient;
+  customerEventsPublisher?: SpyCustomerEventsPublisher;
   logger?: SpyLogger;
 }) => {
   let nowMsCalls = 0;
@@ -233,6 +274,7 @@ const createCollectorHandler = ({
     },
     sleep: () => Promise.resolve(),
     upsertCustomersBatchClient: upsertCustomersBatchClient.invoke,
+    customerEventsPublisher: customerEventsPublisher.publish,
     logger: logger ?? new SpyLogger(),
   };
 
@@ -301,6 +343,7 @@ describe('collector handler', () => {
     expect(result.rejectedRecords).toEqual([]);
     expect(result.persistenceRejectedRecords).toEqual([]);
     expect(result.upsertAttempts).toBe(1);
+    expect(result.eventsPublished).toBe(2);
     expect(result.records).toEqual([
       {
         id: 10,
@@ -358,6 +401,14 @@ describe('collector handler', () => {
         },
       ],
       [
+        'collector.sns.events_published',
+        {
+          sourceId: 'source-acme',
+          correlationId: 'source-acme-unknown-updated_at',
+          publishedCount: 2,
+        },
+      ],
+      [
         'collector.cursor.updated',
         {
           sourceId: 'source-acme',
@@ -410,6 +461,7 @@ describe('collector handler', () => {
     expect(result.rejectedRecords).toEqual([]);
     expect(result.persistenceRejectedRecords).toEqual([]);
     expect(result.upsertAttempts).toBe(1);
+    expect(result.eventsPublished).toBe(1);
     expect(result.records).toEqual([
       {
         id: 99,
@@ -570,12 +622,14 @@ describe('collector handler', () => {
       },
     ]);
     const upsertClient = new SpyUpsertCustomersBatchClient();
+    const eventsPublisher = new SpyCustomerEventsPublisher();
 
     const handler = createCollectorHandler({
       sourceRegistryRepository: repository,
       secretRepository: secrets,
       postgresQueryExecutorFactory: postgresFactory,
       upsertCustomersBatchClient: upsertClient,
+      customerEventsPublisher: eventsPublisher,
     });
 
     const result = await handler({ sourceId: sourceWithEmailFieldMap.sourceId });
@@ -590,6 +644,7 @@ describe('collector handler', () => {
     ]);
     expect(result.persistenceRejectedRecords).toEqual([]);
     expect(result.upsertAttempts).toBe(1);
+    expect(result.eventsPublished).toBe(1);
     expect(result.rejectedRecords).toEqual([
       {
         index: 1,
@@ -611,6 +666,14 @@ describe('collector handler', () => {
         sourceId: sourceWithEmailFieldMap.sourceId,
         correlationId: `${sourceWithEmailFieldMap.sourceId}-unknown-${sourceWithEmailFieldMap.cursorField}`,
         records: [{ id: 41, email: 'valid@example.com' }],
+      },
+    ]);
+    expect(eventsPublisher.calls).toEqual([
+      {
+        sourceId: sourceWithEmailFieldMap.sourceId,
+        correlationId: `${sourceWithEmailFieldMap.sourceId}-unknown-${sourceWithEmailFieldMap.cursorField}`,
+        records: [{ id: 41, email: 'valid@example.com' }],
+        publishedAt: '2026-03-04T11:00:00.000Z',
       },
     ]);
   });
@@ -675,6 +738,7 @@ describe('collector handler', () => {
       },
     ]);
     expect(result.upsertAttempts).toBe(2);
+    expect(result.eventsPublished).toBe(1);
     expect(upsertClient.calls).toEqual([
       {
         sourceId: VALID_SOURCE.sourceId,

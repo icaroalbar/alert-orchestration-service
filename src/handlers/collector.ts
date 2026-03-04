@@ -39,6 +39,7 @@ import { createPostgresQueryExecutorFactory } from '../infra/collector/postgres-
 import { createDynamoDbCollectorCursorRepository } from '../infra/cursors/dynamodb-collector-cursor-repository';
 import { createSecretsManagerSecretRepository } from '../infra/secrets/secrets-manager-secret-repository';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { createSnsCustomerEventsPublisher, type CustomerEventsPublisher } from '../infra/events/sns-customer-events-publisher';
 import { nowIso } from '../shared/time/now-iso';
 
 const COLLECTOR_SECRET_RETRY_MAX_ATTEMPTS_DEFAULT = 3;
@@ -108,6 +109,7 @@ export interface CollectorResult {
   rejectedRecords: CanonicalCustomerRejectedRecord[];
   persistenceRejectedRecords: UpsertCustomersBatchRejectedRecord[];
   upsertAttempts: number;
+  eventsPublished: number;
 }
 
 export interface CollectorDependencies {
@@ -122,6 +124,7 @@ export interface CollectorDependencies {
   nowMs: () => number;
   sleep: (delayMs: number) => Promise<void>;
   upsertCustomersBatchClient: UpsertCustomersBatchClient;
+  customerEventsPublisher: CustomerEventsPublisher;
   logger: Pick<typeof console, 'info'>;
 }
 
@@ -532,6 +535,11 @@ const getDefaultDependencies = (): CollectorDependencies => {
     throw new Error('OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL is required.');
   }
 
+  const customerEventsTopicArn = process.env.CLIENT_EVENTS_TOPIC_ARN;
+  if (!customerEventsTopicArn || customerEventsTopicArn.trim().length === 0) {
+    throw new Error('CLIENT_EVENTS_TOPIC_ARN is required.');
+  }
+
   cachedDefaultDependencies = {
     sourceRegistryRepository: createDynamoDbSourceRegistryRepository({ tableName }),
     cursorRepository: createDynamoDbCollectorCursorRepository({ tableName: cursorsTableName }),
@@ -586,6 +594,9 @@ const getDefaultDependencies = (): CollectorDependencies => {
       nowMs: Date.now,
       sleep,
     }),
+    customerEventsPublisher: createSnsCustomerEventsPublisher({
+      topicArn: customerEventsTopicArn,
+    }),
     logger: console,
   };
 
@@ -605,6 +616,7 @@ export const createHandler =
     nowMs,
     sleep,
     upsertCustomersBatchClient,
+    customerEventsPublisher,
     logger,
   }: CollectorDependencies) =>
   async (event: CollectorEvent): Promise<CollectorResult> => {
@@ -726,6 +738,20 @@ export const createHandler =
     }
 
     const processedAt = now();
+    const publishResult = await customerEventsPublisher({
+      sourceId,
+      correlationId,
+      records: upsertResult.persistedRecords,
+      publishedAt: processedAt,
+    });
+    if (publishResult.publishedCount > 0) {
+      logger.info('collector.sns.events_published', {
+        sourceId,
+        correlationId,
+        publishedCount: publishResult.publishedCount,
+      });
+    }
+
     const candidateCursor = resolveLatestCursorFromRecords({
       records,
       cursorField: sourceConfiguration.cursorField,
@@ -758,6 +784,7 @@ export const createHandler =
       rejectedRecords: canonicalValidationResult.rejectedRecords,
       persistenceRejectedRecords: upsertResult.rejectedRecords,
       upsertAttempts: upsertResult.attempts,
+      eventsPublished: publishResult.publishedCount,
     };
   };
 

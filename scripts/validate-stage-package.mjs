@@ -1,5 +1,8 @@
 import { execSync } from 'node:child_process';
 
+const DEFAULT_STAGE_PACKAGE_COMMAND = 'npm run sls:package:all';
+const DEFAULT_STAGE_PACKAGE_FALLBACK_COMMAND = 'npm run build';
+
 const run = (command) =>
   execSync(command, {
     encoding: 'utf8',
@@ -15,8 +18,20 @@ const printCapturedOutput = (error) => {
   return `${stdout}\n${stderr}`;
 };
 
+const emitUnclassifiedFailure = ({ stage, command }) => {
+  console.error(`UNCLASSIFIED_STAGE_VALIDATION_ERROR stage=${stage} command="${command}"`);
+  console.error(
+    'Próxima ação: habilite modo verbose (DEBUG=* ou SLS_DEBUG=*) e revise os logs do comando subjacente.',
+  );
+};
+
+const stagePackageCommand =
+  process.env.VALIDATE_STAGE_PACKAGE_COMMAND ?? DEFAULT_STAGE_PACKAGE_COMMAND;
+const stagePackageFallbackCommand =
+  process.env.VALIDATE_STAGE_PACKAGE_FALLBACK_COMMAND ?? DEFAULT_STAGE_PACKAGE_FALLBACK_COMMAND;
+
 try {
-  const output = run('npm run sls:package:all');
+  const output = run(stagePackageCommand);
   if (output) process.stdout.write(output);
   process.exit(0);
 } catch (error) {
@@ -28,11 +43,15 @@ try {
     output.includes('core.serverless.com');
 
   if (!canFallback) {
+    emitUnclassifiedFailure({
+      stage: 'stage-package',
+      command: stagePackageCommand,
+    });
     process.exit(1);
   }
 
   console.warn(
     '\nAviso: empacotamento multi-stage indisponível no ambiente atual (credenciais/rede). Executando fallback com build local.',
   );
-  execSync('npm run build', { stdio: 'inherit', env: process.env });
+  execSync(stagePackageFallbackCommand, { stdio: 'inherit', env: process.env });
 }

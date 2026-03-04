@@ -151,7 +151,7 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - `logs:CreateLogStream` e `logs:PutLogEvents` apenas no log group `/aws/lambda/${service}-${stage}-scheduler`.
 - A state machine principal usa role dedicada (`${service}-${stage}-state-machine-role`) com permissão apenas de `lambda:InvokeFunction` na Lambda scheduler.
 - Roles reservadas para etapas seguintes já provisionadas com escopo mínimo e recursos explícitos:
-  - `collector-role` para leitura de config (`sources`), atualização de cursor (`cursors`) e `sns:Publish` no tópico de eventos.
+  - `collector-role` para leitura de config (`sources`), leitura de segredos (`secretsmanager:GetSecretValue`), atualização de cursor (`cursors`) e `sns:Publish` no tópico de eventos.
   - `salesforce-consumer-role` para consumo da fila `SalesforceIntegrationQueue`.
   - `hubspot-consumer-role` para consumo da fila `HubspotIntegrationQueue`.
 - ARNs das roles exportados via outputs para reuso em stacks/funções futuras:

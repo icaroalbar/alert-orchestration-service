@@ -24,6 +24,10 @@ import {
   type CollectorSourceConfigurationRepository,
 } from '../domain/collector/load-source-configuration';
 import { mapRecordsWithFieldMap } from '../domain/collector/map-records-with-field-map';
+import {
+  validateCanonicalCustomerBatch,
+  type CanonicalCustomerRejectedRecord,
+} from '../domain/collector/validate-canonical-customer-batch';
 import { createMySqlQueryExecutorFactory } from '../infra/collector/mysql-query-executor';
 import { createPostgresQueryExecutorFactory } from '../infra/collector/postgres-query-executor';
 import { createDynamoDbCollectorCursorRepository } from '../infra/cursors/dynamodb-collector-cursor-repository';
@@ -82,6 +86,8 @@ export interface CollectorResult {
   processedAt: string;
   recordsSent: number;
   records: CollectorStandardizedRecord[];
+  schemaVersion: string;
+  rejectedRecords: CanonicalCustomerRejectedRecord[];
 }
 
 export interface CollectorDependencies {
@@ -570,6 +576,19 @@ export const createHandler =
       });
     }
 
+    const canonicalValidationResult = validateCanonicalCustomerBatch(mappingResult.records);
+    if (canonicalValidationResult.rejectedRecords.length > 0) {
+      logger.info('collector.canonical_validation.rejected_records', {
+        sourceId,
+        schemaVersion: canonicalValidationResult.schemaVersion,
+        rejectedRecordsCount: canonicalValidationResult.rejectedRecords.length,
+        rejectedIssues: canonicalValidationResult.rejectedRecords.map((rejectedRecord) => ({
+          index: rejectedRecord.index,
+          issues: rejectedRecord.issues,
+        })),
+      });
+    }
+
     const processedAt = now();
     const candidateCursor = resolveLatestCursorFromRecords({
       records,
@@ -597,8 +616,10 @@ export const createHandler =
     return {
       sourceId,
       processedAt,
-      recordsSent: records.length,
-      records: mappingResult.records,
+      recordsSent: canonicalValidationResult.validRecords.length,
+      records: canonicalValidationResult.validRecords,
+      schemaVersion: canonicalValidationResult.schemaVersion,
+      rejectedRecords: canonicalValidationResult.rejectedRecords,
     };
   };
 

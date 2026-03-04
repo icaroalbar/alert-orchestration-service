@@ -80,7 +80,6 @@ describe('main-orchestration-v1.asl.json', () => {
     const states = asObject(definition.States);
     const normalizeInput = asObject(states.NormalizeInput);
     const scheduler = asObject(states.Scheduler);
-    const normalizeSchedulerOutput = asObject(states.NormalizeSchedulerOutput);
     const processEligibleSources = asObject(states.ProcessEligibleSources);
     const buildExecutionOutput = asObject(states.BuildExecutionOutput);
     const publishExecutionSuccessMetric = asObject(states.PublishExecutionSuccessMetric);
@@ -106,7 +105,7 @@ describe('main-orchestration-v1.asl.json', () => {
 
     expect(scheduler.Type).toBe('Task');
     expect(scheduler.ResultPath).toBe('$.schedulerResult');
-    expect(scheduler.Next).toBe('NormalizeSchedulerOutput');
+    expect(scheduler.Next).toBe('ProcessEligibleSources');
     const schedulerParameters = asObject(scheduler.Parameters);
     expect(schedulerParameters['now.$']).toBe('$.schedulerInput.now');
     const schedulerRetry = scheduler.Retry as unknown[];
@@ -137,22 +136,9 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(schedulerCatchEntry.ResultPath).toBe('$.schedulerError');
     expect(schedulerCatchEntry.Next).toBe('BuildSchedulerFailureOutput');
 
-    expect(normalizeSchedulerOutput.Type).toBe('Pass');
-    expect(normalizeSchedulerOutput.ResultPath).toBe('$');
-    expect(normalizeSchedulerOutput.Next).toBe('ProcessEligibleSources');
-    const normalizeSchedulerParameters = asObject(normalizeSchedulerOutput.Parameters);
-    expect(normalizeSchedulerParameters['meta.$']).toBe('$.meta');
-    const schedulerPayload = asObject(normalizeSchedulerParameters.scheduler);
-    expect(schedulerPayload['sourceIds.$']).toBe('$.schedulerResult.sourceIds');
-    expect(schedulerPayload['generatedAt.$']).toBe('$.schedulerResult.generatedAt');
-    expect(schedulerPayload['maxConcurrency.$']).toBe('$.schedulerResult.maxConcurrency');
-    expect(schedulerPayload['eligibleSources.$']).toBe(
-      'States.ArrayLength($.schedulerResult.sourceIds)',
-    );
-
     expect(processEligibleSources.Type).toBe('Map');
-    expect(processEligibleSources.ItemsPath).toBe('$.scheduler.sourceIds');
-    expect(processEligibleSources.MaxConcurrencyPath).toBe('$.scheduler.maxConcurrency');
+    expect(processEligibleSources.ItemsPath).toBe('$.schedulerResult.sourceIds');
+    expect(processEligibleSources.MaxConcurrencyPath).toBe('$.schedulerResult.maxConcurrency');
     expect(processEligibleSources.ResultPath).toBe('$.collectorResults');
     expect(processEligibleSources.Next).toBe('BuildExecutionOutput');
     const processEligibleSourcesParameters = asObject(processEligibleSources.Parameters);
@@ -282,13 +268,17 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(buildExecutionOutput.Next).toBe('PublishExecutionSuccessMetric');
     const outputParameters = asObject(buildExecutionOutput.Parameters);
     expect(outputParameters['meta.$']).toBe('$.meta');
-    expect(outputParameters['sources.$']).toBe('$.scheduler.sourceIds');
+    expect(outputParameters['sources.$']).toBe('$.schedulerResult.sourceIds');
     expect(outputParameters['results.$']).toBe('$.collectorResults');
+    const schedulerOutput = asObject(outputParameters.scheduler);
+    expect(schedulerOutput['contractVersion.$']).toBe('$.schedulerResult.contractVersion');
+    expect(schedulerOutput['referenceNow.$']).toBe('$.schedulerResult.referenceNow');
+    expect(schedulerOutput['hasEligibleSources.$']).toBe('$.schedulerResult.hasEligibleSources');
     const summary = asObject(outputParameters.summary);
     expect(summary['processedSources.$']).toBe('States.ArrayLength($.collectorResults)');
-    expect(summary['eligibleSources.$']).toBe('$.scheduler.eligibleSources');
-    expect(summary['generatedAt.$']).toBe('$.scheduler.generatedAt');
-    expect(summary['maxConcurrency.$']).toBe('$.scheduler.maxConcurrency');
+    expect(summary['eligibleSources.$']).toBe('$.schedulerResult.eligibleSources');
+    expect(summary['generatedAt.$']).toBe('$.schedulerResult.generatedAt');
+    expect(summary['maxConcurrency.$']).toBe('$.schedulerResult.maxConcurrency');
     expect(summary.schedulerStatus).toBe('SUCCEEDED');
 
     expect(publishExecutionSuccessMetric.Type).toBe('Task');
@@ -416,8 +406,11 @@ describe('main-orchestration-v1.asl.json', () => {
           executionId: 'exec-123',
           stage: 'dev',
         },
-        scheduler: {
+        schedulerResult: {
           sourceIds: ['source-a', 'source-b', 'source-c'],
+          contractVersion: 'scheduler-output.v1',
+          referenceNow: '2026-03-03T00:00:00.000Z',
+          hasEligibleSources: true,
           eligibleSources: 3,
           generatedAt: '2026-03-03T00:00:00.000Z',
           maxConcurrency: 5,
@@ -441,6 +434,10 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(failedResult?.cause).toContain('source-b');
 
     const summary = asObject(executionOutput.summary);
+    const scheduler = asObject(executionOutput.scheduler);
+    expect(scheduler.contractVersion).toBe('scheduler-output.v1');
+    expect(scheduler.referenceNow).toBe('2026-03-03T00:00:00.000Z');
+    expect(scheduler.hasEligibleSources).toBe(true);
     expect(summary.eligibleSources).toBe(3);
     expect(summary.processedSources).toBe(3);
     expect(summary.schedulerStatus).toBe('SUCCEEDED');

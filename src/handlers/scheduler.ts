@@ -15,7 +15,11 @@ export interface SchedulerEvent {
 }
 
 export interface SchedulerResult {
+  contractVersion: string;
   sourceIds: string[];
+  eligibleSources: number;
+  hasEligibleSources: boolean;
+  referenceNow: string;
   generatedAt: string;
   maxConcurrency: number;
 }
@@ -27,6 +31,7 @@ export interface SchedulerDependencies {
 }
 
 let cachedDefaultDependencies: SchedulerDependencies | undefined;
+const SCHEDULER_RESULT_CONTRACT_VERSION = 'scheduler-output.v1';
 
 const resolveMapMaxConcurrency = (rawValue: string | undefined): number => {
   if (!rawValue) {
@@ -100,14 +105,19 @@ export const createHandler =
     });
 
     const sourceIds = sources.map((source) => source.sourceId);
+    const eligibleSources = sourceIds.length;
     const maxConcurrency = resolveMapMaxConcurrency(process.env.MAP_MAX_CONCURRENCY);
     console.info('scheduler.eligible_sources.filtered', {
       referenceNow,
-      eligibleSources: sourceIds.length,
+      eligibleSources,
     });
 
     return {
+      contractVersion: SCHEDULER_RESULT_CONTRACT_VERSION,
       sourceIds,
+      eligibleSources,
+      hasEligibleSources: eligibleSources > 0,
+      referenceNow,
       generatedAt,
       maxConcurrency,
     };

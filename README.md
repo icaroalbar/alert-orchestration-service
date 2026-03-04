@@ -115,6 +115,7 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
     - `403` para token sem escopo exigido.
 - Definição da state machine principal versionada em `state-machines/main-orchestration-v1.asl.json`.
 - Contratos de entrada/saída por estado documentados em `docs/step-functions/main-orchestration-v1.md`.
+- Contrato versionado da saída do scheduler documentado em `docs/step-functions/scheduler-output-v1.md`.
 - Retry com backoff exponencial configurado na state machine para tasks críticas:
   - `Scheduler` e `InvokeCollector` com tentativa para erros transitórios de Lambda:
     - `IntervalSeconds: 2`, `MaxAttempts: 3`, `BackoffRate: 2`.

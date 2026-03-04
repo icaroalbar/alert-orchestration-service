@@ -88,6 +88,8 @@ custom:
     sourceRegistryApiRoleName: ${self:custom.naming.prefix}-source-registry-api-role
     stateMachineRoleName: ${self:custom.naming.prefix}-state-machine-role
     collectorRoleName: ${self:custom.naming.prefix}-collector-role
+    salesforceConsumerFunctionName: ${self:custom.naming.prefix}-salesforce-consumer
+    hubspotConsumerFunctionName: ${self:custom.naming.prefix}-hubspot-consumer
     salesforceConsumerRoleName: ${self:custom.naming.prefix}-salesforce-consumer-role
     hubspotConsumerRoleName: ${self:custom.naming.prefix}-hubspot-consumer-role
   stages:
@@ -103,6 +105,8 @@ custom:
       clientEventsTopicName: ${self:service}-dev-client-events
       salesforceQueueName: ${self:service}-dev-salesforce-events
       hubspotQueueName: ${self:service}-dev-hubspot-events
+      salesforceIntegrationTargetBaseUrl: ${env:SALESFORCE_INTEGRATION_TARGET_BASE_URL_DEV, 'https://salesforce.dev.internal'}
+      hubspotIntegrationTargetBaseUrl: ${env:HUBSPOT_INTEGRATION_TARGET_BASE_URL_DEV, 'https://hubspot.dev.internal'}
       integrationQueueMessageRetentionSeconds: 1209600
       salesforceDlqName: ${self:service}-dev-salesforce-events-dlq
       hubspotDlqName: ${self:service}-dev-hubspot-events-dlq
@@ -123,6 +127,8 @@ custom:
       clientEventsTopicName: ${self:service}-stg-client-events
       salesforceQueueName: ${self:service}-stg-salesforce-events
       hubspotQueueName: ${self:service}-stg-hubspot-events
+      salesforceIntegrationTargetBaseUrl: ${env:SALESFORCE_INTEGRATION_TARGET_BASE_URL_STG, 'https://salesforce.stg.internal'}
+      hubspotIntegrationTargetBaseUrl: ${env:HUBSPOT_INTEGRATION_TARGET_BASE_URL_STG, 'https://hubspot.stg.internal'}
       integrationQueueMessageRetentionSeconds: 1209600
       salesforceDlqName: ${self:service}-stg-salesforce-events-dlq
       hubspotDlqName: ${self:service}-stg-hubspot-events-dlq
@@ -143,6 +149,8 @@ custom:
       clientEventsTopicName: ${self:service}-prod-client-events
       salesforceQueueName: ${self:service}-prod-salesforce-events
       hubspotQueueName: ${self:service}-prod-hubspot-events
+      salesforceIntegrationTargetBaseUrl: ${env:SALESFORCE_INTEGRATION_TARGET_BASE_URL_PROD, 'https://salesforce.internal'}
+      hubspotIntegrationTargetBaseUrl: ${env:HUBSPOT_INTEGRATION_TARGET_BASE_URL_PROD, 'https://hubspot.internal'}
       integrationQueueMessageRetentionSeconds: 1209600
       salesforceDlqName: ${self:service}-prod-salesforce-events-dlq
       hubspotDlqName: ${self:service}-prod-hubspot-events-dlq
@@ -176,6 +184,48 @@ functions:
       Fn::GetAtt:
         - CollectorExecutionRole
         - Arn
+  salesforceConsumer:
+    name: ${self:custom.naming.salesforceConsumerFunctionName}
+    handler: dist/handlers/salesforce-consumer.handler
+    description: Consumidora dedicada para entrega de eventos de clientes na integracao Salesforce.
+    memorySize: 256
+    timeout: 30
+    role:
+      Fn::GetAtt:
+        - SalesforceConsumerExecutionRole
+        - Arn
+    environment:
+      INTEGRATION_NAME: salesforce
+      SALESFORCE_INTEGRATION_TARGET_BASE_URL: ${self:custom.stages.${self:provider.stage}.salesforceIntegrationTargetBaseUrl}
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - SalesforceIntegrationQueue
+              - Arn
+          batchSize: 10
+          functionResponseType: ReportBatchItemFailures
+  hubspotConsumer:
+    name: ${self:custom.naming.hubspotConsumerFunctionName}
+    handler: dist/handlers/hubspot-consumer.handler
+    description: Consumidora dedicada para entrega de eventos de clientes na integracao HubSpot.
+    memorySize: 256
+    timeout: 30
+    role:
+      Fn::GetAtt:
+        - HubspotConsumerExecutionRole
+        - Arn
+    environment:
+      INTEGRATION_NAME: hubspot
+      HUBSPOT_INTEGRATION_TARGET_BASE_URL: ${self:custom.stages.${self:provider.stage}.hubspotIntegrationTargetBaseUrl}
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - HubspotIntegrationQueue
+              - Arn
+          batchSize: 10
+          functionResponseType: ReportBatchItemFailures
   createSource:
     name: ${self:custom.naming.createSourceFunctionName}
     handler: dist/handlers/create-source.handler
@@ -303,6 +353,16 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:custom.naming.listSourceFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    SalesforceConsumerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.salesforceConsumerFunctionName}
+        RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
+    HubspotConsumerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:custom.naming.hubspotConsumerFunctionName}
         RetentionInDays: ${self:custom.stages.${self:provider.stage}.logRetentionInDays}
     MainOrchestrationStateMachineLogGroup:
       Type: AWS::Logs::LogGroup
@@ -531,6 +591,13 @@ resources:
                     - Fn::GetAtt:
                         - SalesforceIntegrationQueue
                         - Arn
+                - Sid: WriteSalesforceConsumerLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.salesforceConsumerFunctionName}:*
     HubspotConsumerExecutionRole:
       Type: AWS::IAM::Role
       Properties:
@@ -560,6 +627,13 @@ resources:
                     - Fn::GetAtt:
                         - HubspotIntegrationQueue
                         - Arn
+                - Sid: WriteHubspotConsumerLogs
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.hubspotConsumerFunctionName}:*
     SourcesTable:
       Type: AWS::DynamoDB::Table
       Properties:

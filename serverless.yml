@@ -33,6 +33,7 @@ provider:
     COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS: ${env:COLLECTOR_MYSQL_POOL_CONNECTION_TIMEOUT_MS, '5000'}
     COLLECTOR_MYSQL_QUERY_TIMEOUT_MS: ${env:COLLECTOR_MYSQL_QUERY_TIMEOUT_MS, '5000'}
     OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL: ${env:OFFICIAL_CUSTOMERS_UPSERT_BATCH_URL, 'https://official-bank.internal/customers/upsert-batch'}
+    OFFICIAL_CUSTOMERS_AUTH_SECRET_ARN: ${env:OFFICIAL_CUSTOMERS_AUTH_SECRET_ARN, ''}
     OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS: ${env:OFFICIAL_CUSTOMERS_UPSERT_TIMEOUT_MS, '5000'}
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_MAX_ATTEMPTS, '3'}
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS, '200'}
@@ -68,6 +69,8 @@ provider:
       Fn::GetAtt:
         - HubspotIntegrationDlq
         - Arn
+    SALESFORCE_INTEGRATION_AUTH_SECRET_ARN: ${env:SALESFORCE_INTEGRATION_AUTH_SECRET_ARN, ''}
+    HUBSPOT_INTEGRATION_AUTH_SECRET_ARN: ${env:HUBSPOT_INTEGRATION_AUTH_SECRET_ARN, ''}
   stackTags:
     Service: ${self:service}
     Stage: ${self:provider.stage}
@@ -685,6 +688,12 @@ resources:
                     - Fn::GetAtt:
                         - IdempotencyTable
                         - Arn
+                - Sid: ReadSalesforceOutboundAuthSecret
+                  Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
                 - Sid: PublishSalesforceRuntimeMetrics
                   Effect: Allow
                   Action:
@@ -738,6 +747,12 @@ resources:
                     - Fn::GetAtt:
                         - IdempotencyTable
                         - Arn
+                - Sid: ReadHubspotOutboundAuthSecret
+                  Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource:
+                    - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
                 - Sid: PublishHubspotRuntimeMetrics
                   Effect: Allow
                   Action:

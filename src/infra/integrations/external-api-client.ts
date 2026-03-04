@@ -24,6 +24,16 @@ export class IntegrationExternalApiTransientError extends Error {
   }
 }
 
+export class IntegrationExternalApiAuthError extends Error {
+  constructor(
+    public readonly integrationName: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'IntegrationExternalApiAuthError';
+  }
+}
+
 export interface SendIntegrationCustomerEventParams {
   payload: IntegrationConsumerPayload;
   messageId: string;
@@ -51,6 +61,7 @@ export const createIntegrationExternalApiClient = ({
   targetBaseUrl,
   timeoutMs,
   httpClient,
+  resolveAuthHeaders = () => Promise.resolve({}),
   metricsPublisher = noopMetricsPublisher,
   nowMs = Date.now,
   logger = console,
@@ -59,6 +70,7 @@ export const createIntegrationExternalApiClient = ({
   targetBaseUrl: string;
   timeoutMs: number;
   httpClient: IntegrationHttpClient;
+  resolveAuthHeaders?: () => Promise<Record<string, string>>;
   metricsPublisher?: PublishIntegrationDeliveryMetrics;
   nowMs?: () => number;
   logger?: Pick<typeof console, 'info'>;
@@ -81,12 +93,23 @@ export const createIntegrationExternalApiClient = ({
   return async ({ payload, messageId }: SendIntegrationCustomerEventParams): Promise<void> => {
     const startedAt = nowMs();
     const url = `${normalizedTargetBaseUrl}/customers/events`;
+    let authHeaders: Record<string, string>;
+    try {
+      authHeaders = await resolveAuthHeaders();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'UnknownError';
+      throw new IntegrationExternalApiAuthError(
+        normalizedIntegrationName,
+        `Outbound auth resolution failed: ${reason}`,
+      );
+    }
 
     const response = await httpClient({
       url,
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        ...authHeaders,
       },
       body: JSON.stringify({
         eventType: payload.eventType,

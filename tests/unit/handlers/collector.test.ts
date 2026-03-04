@@ -933,9 +933,96 @@ describe('collector handler', () => {
         .filter((claim) => claim.scope === 'upsert')
         .map((claim) => claim.status),
     ).toEqual(['PENDING', 'PENDING']);
-    expect(idempotencyRepository.markCompletedCalls).toEqual([
+    const upsertCompletions = idempotencyRepository.markCompletedCalls.filter((completion) =>
+      completion.deduplicationKey.startsWith('upsert:'),
+    );
+    expect(upsertCompletions).toEqual([
       {
         deduplicationKey: `upsert:${VALID_SOURCE.sourceId}:2026-03-01T00:00:00.000Z:10`,
+        completedAt: '2026-03-04T11:00:00.000Z',
+        expiresAtEpochSeconds: 3601,
+      },
+    ]);
+  });
+
+  it('retries only pending SNS events after partial publish failure', async () => {
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          VALID_SOURCE.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        customer_id: 10,
+        email: 'first@example.com',
+        updated_at: new Date('2026-03-04T10:10:00.000Z'),
+      },
+      {
+        customer_id: 11,
+        email: 'second@example.com',
+        updated_at: new Date('2026-03-04T10:20:00.000Z'),
+      },
+    ]);
+    let shouldFailRecord11 = true;
+    const eventsPublisher = new SpyCustomerEventsPublisher((records) => {
+      const [record] = records;
+      if (record?.id === 11 && shouldFailRecord11) {
+        shouldFailRecord11 = false;
+        throw new Error('sns transient failure');
+      }
+
+      return {
+        publishedCount: records.length,
+      };
+    });
+    const idempotencyRepository = new SpyCollectorIdempotencyRepository();
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+      customerEventsPublisher: eventsPublisher,
+      idempotencyRepository,
+    });
+
+    await expect(handler({ sourceId: VALID_SOURCE.sourceId })).rejects.toThrow(
+      'sns transient failure',
+    );
+
+    const retryResult = await handler({ sourceId: VALID_SOURCE.sourceId });
+
+    expect(retryResult.recordsSent).toBe(0);
+    expect(retryResult.eventsPublished).toBe(1);
+
+    const publishedRecordIds = eventsPublisher.calls.map((call) => {
+      const [record] = call.records;
+      return record?.id;
+    });
+    expect(publishedRecordIds).toEqual([10, 11, 11]);
+
+    const eventCompletions = idempotencyRepository.markCompletedCalls.filter((completion) =>
+      completion.deduplicationKey.startsWith('event:'),
+    );
+    expect(eventCompletions).toEqual([
+      {
+        deduplicationKey: `event:${VALID_SOURCE.sourceId}:2026-03-01T00:00:00.000Z:10`,
+        completedAt: '2026-03-04T11:00:00.000Z',
+        expiresAtEpochSeconds: 3601,
+      },
+      {
+        deduplicationKey: `event:${VALID_SOURCE.sourceId}:2026-03-01T00:00:00.000Z:11`,
         completedAt: '2026-03-04T11:00:00.000Z',
         expiresAtEpochSeconds: 3601,
       },
@@ -996,7 +1083,7 @@ describe('collector handler', () => {
 
     expect(result.recordsSent).toBe(1);
     expect(result.records).toEqual([{ id: 10, email: 'first@example.com' }]);
-    expect(result.eventsPublished).toBe(0);
+    expect(result.eventsPublished).toBe(1);
     expect(result.deduplicatedUpsertRecords).toBe(1);
     expect(result.deduplicatedEventRecords).toBe(1);
     expect(upsertClient.calls).toEqual([
@@ -1010,7 +1097,7 @@ describe('collector handler', () => {
       {
         sourceId: VALID_SOURCE.sourceId,
         correlationId: `${VALID_SOURCE.sourceId}-dev-${VALID_SOURCE.cursorField}`,
-        records: [],
+        records: [{ id: 11, email: 'second@example.com' }],
         publishedAt: '2026-03-04T11:00:00.000Z',
       },
     ]);

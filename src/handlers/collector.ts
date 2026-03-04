@@ -932,9 +932,28 @@ export const createHandler =
         });
       }
 
+      const eventCandidatesByRecordId = new Map<string, CollectorStandardizedRecord>();
+      for (const record of upsertResult.persistedRecords) {
+        const recordId = normalizeRecordId(record);
+        if (recordId.length === 0) {
+          continue;
+        }
+
+        eventCandidatesByRecordId.set(recordId, record);
+      }
+      for (const record of duplicatedUpsertRecords) {
+        const recordId = normalizeRecordId(record);
+        if (recordId.length === 0) {
+          continue;
+        }
+
+        eventCandidatesByRecordId.set(recordId, record);
+      }
+      const eventCandidateRecords = Array.from(eventCandidatesByRecordId.values());
+
       const nonDuplicatedEventRecords: CollectorStandardizedRecord[] = [];
       const duplicatedEventRecords: CollectorStandardizedRecord[] = [];
-      for (const record of upsertResult.persistedRecords) {
+      for (const record of eventCandidateRecords) {
         const recordId = normalizeRecordId(record);
         if (recordId.length === 0) {
           duplicatedEventRecords.push(record);
@@ -949,6 +968,7 @@ export const createHandler =
             cursorToken,
           }),
           scope: 'event',
+          status: 'PENDING',
           sourceId,
           recordId,
           cursor: cursorToken,
@@ -986,17 +1006,54 @@ export const createHandler =
         });
       }
 
-      const publishResult = await customerEventsPublisher({
-        sourceId,
-        correlationId,
-        records: nonDuplicatedEventRecords,
-        publishedAt: processedAt,
-      });
-      if (publishResult.publishedCount > 0) {
+      if (nonDuplicatedEventRecords.length > 0) {
+        logger.info('collector.idempotency.event_pending_claimed', {
+          sourceId,
+          correlationId,
+          pendingCount: nonDuplicatedEventRecords.length,
+        });
+      }
+
+      let publishedEventsCount = 0;
+      let completedEventClaims = 0;
+      for (const record of nonDuplicatedEventRecords) {
+        await customerEventsPublisher({
+          sourceId,
+          correlationId,
+          records: [record],
+          publishedAt: processedAt,
+        });
+
+        publishedEventsCount += 1;
+        const recordId = normalizeRecordId(record);
+        if (recordId.length === 0) {
+          continue;
+        }
+
+        await idempotencyRepository.markCompleted({
+          deduplicationKey: buildDeduplicationKey({
+            scope: 'event',
+            sourceId,
+            recordId,
+            cursorToken,
+          }),
+          completedAt: processedAt,
+          expiresAtEpochSeconds: claimExpiration,
+        });
+        completedEventClaims += 1;
+      }
+      if (publishedEventsCount > 0) {
         logger.info('collector.sns.events_published', {
           sourceId,
           correlationId,
-          publishedCount: publishResult.publishedCount,
+          publishedCount: publishedEventsCount,
+        });
+      }
+      if (completedEventClaims > 0) {
+        logger.info('collector.idempotency.event_completed', {
+          sourceId,
+          correlationId,
+          completedCount: completedEventClaims,
         });
       }
 
@@ -1032,7 +1089,7 @@ export const createHandler =
         rejectedRecords: canonicalValidationResult.rejectedRecords,
         persistenceRejectedRecords: upsertResult.rejectedRecords,
         upsertAttempts: upsertResult.attempts,
-        eventsPublished: publishResult.publishedCount,
+        eventsPublished: publishedEventsCount,
         deduplicatedUpsertRecords: duplicatedUpsertRecords.length,
         deduplicatedEventRecords: duplicatedEventRecords.length,
       };

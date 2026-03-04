@@ -5,6 +5,7 @@ import { calculateNextRunAt, type NextRunSchedule } from '../sources/next-run-at
  * Infrastructure details are hidden behind the repository contract.
  */
 interface SchedulerSourceBase {
+  tenantId: string;
   sourceId: string;
   nextRunAt: string;
 }
@@ -77,6 +78,10 @@ const resolveReferenceNow = (rawNow?: string): { iso: string; timestamp: number 
 };
 
 const normalizeSchedulerSource = (source: SchedulerSource): SchedulerSource => {
+  if (!isNonEmptyString(source.tenantId)) {
+    throw new Error('Invalid scheduler source record: tenantId is required.');
+  }
+
   if (!isNonEmptyString(source.sourceId)) {
     throw new Error('Invalid scheduler source record: sourceId is required.');
   }
@@ -87,6 +92,7 @@ const normalizeSchedulerSource = (source: SchedulerSource): SchedulerSource => {
     );
   }
 
+  const tenantId = source.tenantId.trim();
   const sourceId = source.sourceId.trim();
   const nextRunAt = source.nextRunAt.trim();
 
@@ -98,6 +104,7 @@ const normalizeSchedulerSource = (source: SchedulerSource): SchedulerSource => {
     }
 
     return {
+      tenantId,
       sourceId,
       nextRunAt,
       scheduleType: 'interval',
@@ -113,6 +120,7 @@ const normalizeSchedulerSource = (source: SchedulerSource): SchedulerSource => {
     }
 
     return {
+      tenantId,
       sourceId,
       nextRunAt,
       scheduleType: 'cron',

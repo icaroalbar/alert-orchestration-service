@@ -3,10 +3,6 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 describe('salesforce-consumer handler', () => {
   const originalEnv = process.env;
   const originalFetch = global.fetch;
-  const mockIdempotencyRepositoryFactory = () => ({
-    tryClaim: jest.fn(() => Promise.resolve(true)),
-    markCompleted: jest.fn(() => Promise.resolve()),
-  });
 
   afterEach(() => {
     process.env = { ...originalEnv };
@@ -16,10 +12,6 @@ describe('salesforce-consumer handler', () => {
 
   it('fails when target URL env var is missing', async () => {
     jest.resetModules();
-    const idempotencyRepository = mockIdempotencyRepositoryFactory();
-    jest.doMock('../../../src/infra/idempotency/dynamodb-collector-idempotency-repository', () => ({
-      createDynamoDbCollectorIdempotencyRepository: () => idempotencyRepository,
-    }));
     process.env = { ...originalEnv };
     delete process.env.SALESFORCE_INTEGRATION_TARGET_BASE_URL;
 
@@ -31,10 +23,6 @@ describe('salesforce-consumer handler', () => {
 
   it('initializes with integration-specific configuration', async () => {
     jest.resetModules();
-    const idempotencyRepository = mockIdempotencyRepositoryFactory();
-    jest.doMock('../../../src/infra/idempotency/dynamodb-collector-idempotency-repository', () => ({
-      createDynamoDbCollectorIdempotencyRepository: () => idempotencyRepository,
-    }));
     jest.doMock('../../../src/infra/security/secrets-manager-outbound-auth-headers-resolver', () => ({
       createSecretsManagerOutboundAuthHeadersResolver: () => () =>
         Promise.resolve({
@@ -44,7 +32,6 @@ describe('salesforce-consumer handler', () => {
     process.env = {
       ...originalEnv,
       SALESFORCE_INTEGRATION_TARGET_BASE_URL: 'https://salesforce.internal',
-      IDEMPOTENCY_TABLE_NAME: 'idempotency-table',
       SALESFORCE_INTEGRATION_AUTH_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123:secret:salesforce',
     };
     global.fetch = jest.fn(() =>
@@ -60,7 +47,7 @@ describe('salesforce-consumer handler', () => {
         Records: [
           {
             messageId: 'msg-1',
-            body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+            body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
           },
         ],
       }),
@@ -71,10 +58,6 @@ describe('salesforce-consumer handler', () => {
 
   it('discards permanent 4xx external errors without retrying the SQS message', async () => {
     jest.resetModules();
-    const idempotencyRepository = mockIdempotencyRepositoryFactory();
-    jest.doMock('../../../src/infra/idempotency/dynamodb-collector-idempotency-repository', () => ({
-      createDynamoDbCollectorIdempotencyRepository: () => idempotencyRepository,
-    }));
     jest.doMock('../../../src/infra/security/secrets-manager-outbound-auth-headers-resolver', () => ({
       createSecretsManagerOutboundAuthHeadersResolver: () => () =>
         Promise.resolve({
@@ -84,7 +67,6 @@ describe('salesforce-consumer handler', () => {
     process.env = {
       ...originalEnv,
       SALESFORCE_INTEGRATION_TARGET_BASE_URL: 'https://salesforce.internal',
-      IDEMPOTENCY_TABLE_NAME: 'idempotency-table',
       SALESFORCE_INTEGRATION_AUTH_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123:secret:salesforce',
     };
     global.fetch = jest.fn(() =>
@@ -100,7 +82,7 @@ describe('salesforce-consumer handler', () => {
         Records: [
           {
             messageId: 'msg-1',
-            body: '{"eventType":"customer.persisted","sourceId":"source-1","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
+            body: '{"eventType":"customer.persisted","sourceId":"source-1","tenantId":"tenant-acme","correlationId":"exec-1","publishedAt":"2026-03-04T10:00:00.000Z","customer":{"id":1}}',
             attributes: {
               ApproximateReceiveCount: '2',
             },

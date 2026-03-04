@@ -56,12 +56,14 @@ describe('createDynamoDbSchedulerSourceRepository', () => {
         value: {
           Items: [
             marshall({
+              tenantId: 'tenant-acme',
               sourceId: 'source-a',
               nextRunAt: '2026-03-04T10:00:00.000Z',
               scheduleType: 'interval',
               intervalMinutes: 5,
             }),
             marshall({
+              tenantId: 'tenant-acme',
               sourceId: 'source-b',
               nextRunAt: '2026-03-04T11:00:00.000Z',
               scheduleType: 'cron',
@@ -100,18 +102,20 @@ describe('createDynamoDbSchedulerSourceRepository', () => {
       ':nextRunAt': { S: '2026-03-04T10:30:00.000Z' },
     });
     expect(queryCommand.input.ProjectionExpression).toBe(
-      'sourceId, nextRunAt, scheduleType, intervalMinutes, cronExpr',
+      'tenantId, sourceId, nextRunAt, scheduleType, intervalMinutes, cronExpr',
     );
     expect(queryCommand.input.Limit).toBe(2);
     expect(queryCommand.input.ScanIndexForward).toBe(true);
     expect(result.items).toEqual([
       {
+        tenantId: 'tenant-acme',
         sourceId: 'source-a',
         nextRunAt: '2026-03-04T10:00:00.000Z',
         scheduleType: 'interval',
         intervalMinutes: 5,
       },
       {
+        tenantId: 'tenant-acme',
         sourceId: 'source-b',
         nextRunAt: '2026-03-04T11:00:00.000Z',
         scheduleType: 'cron',
@@ -132,6 +136,7 @@ describe('createDynamoDbSchedulerSourceRepository', () => {
         value: {
           Items: [
             marshall({
+              tenantId: 'tenant-acme',
               sourceId: 'source-a',
               nextRunAt: '2026-03-04T10:00:00.000Z',
               scheduleType: 'interval',
@@ -145,6 +150,7 @@ describe('createDynamoDbSchedulerSourceRepository', () => {
         value: {
           Items: [
             marshall({
+              tenantId: 'tenant-acme',
               sourceId: 'source-c',
               nextRunAt: '2026-03-04T12:00:00.000Z',
               scheduleType: 'interval',
@@ -213,6 +219,7 @@ describe('createDynamoDbSchedulerSourceRepository', () => {
         value: {
           Items: [
             marshall({
+              tenantId: 'tenant-acme',
               sourceId: '',
               nextRunAt: '2026-03-04T10:00:00.000Z',
               scheduleType: 'interval',

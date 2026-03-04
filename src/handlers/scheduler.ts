@@ -1,6 +1,12 @@
 import type { SourceRepository } from '../domain/scheduler/list-eligible-sources';
 import { listEligibleSources } from '../domain/scheduler/list-eligible-sources';
 import { createDynamoDbSchedulerSourceRepository } from '../infra/sources/dynamodb-scheduler-source-repository';
+import {
+  buildTelemetryAttributes,
+  toTelemetryLogContext,
+  withTelemetrySpan,
+  type TelemetryTraceContext,
+} from '../shared/observability/open-telemetry';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
 
@@ -15,17 +21,25 @@ export interface SchedulerEvent {
   now?: string;
   meta?: {
     executionId?: string;
+    stage?: string;
+    service?: string;
+    traceContext?: Partial<TelemetryTraceContext>;
   };
 }
 
 export interface SchedulerResult {
   contractVersion: string;
+  sources: Array<{
+    sourceId: string;
+    tenantId: string;
+  }>;
   sourceIds: string[];
   eligibleSources: number;
   hasEligibleSources: boolean;
   referenceNow: string;
   generatedAt: string;
   maxConcurrency: number;
+  traceContext: TelemetryTraceContext;
 }
 
 export interface SchedulerDependencies {
@@ -106,30 +120,67 @@ export const createHandler =
   async (event: SchedulerEvent = {}): Promise<SchedulerResult> => {
     const generatedAt = now();
     const referenceNow = event.now ?? generatedAt;
-    const sources = await listEligibleSources({
-      sourceRepository,
-      now: referenceNow,
-      pageSize: activeSourcesPageSize,
-    });
+    const executionId = event.meta?.executionId?.trim();
 
-    const sourceIds = sources.map((source) => source.sourceId);
-    const eligibleSources = sourceIds.length;
-    const maxConcurrency = resolveMapMaxConcurrency(process.env.MAP_MAX_CONCURRENCY);
-    logger.info('scheduler.eligible_sources.filtered', {
-      referenceNow,
-      eligibleSources,
-      correlationId: event.meta?.executionId?.trim() || null,
-    });
+    return withTelemetrySpan({
+      component: 'scheduler',
+      spanName: 'scheduler.execute',
+      parentTraceContext: event.meta?.traceContext,
+      attributes: buildTelemetryAttributes({
+        service: event.meta?.service,
+        stage: event.meta?.stage,
+        executionId,
+      }),
+      run: async ({ traceContext, runInChildSpan }) => {
+        logger.info('scheduler.telemetry.trace_context', {
+          ...toTelemetryLogContext(traceContext),
+          executionId: executionId ?? null,
+        });
 
-    return {
-      contractVersion: SCHEDULER_RESULT_CONTRACT_VERSION,
-      sourceIds,
-      eligibleSources,
-      hasEligibleSources: eligibleSources > 0,
-      referenceNow,
-      generatedAt,
-      maxConcurrency,
-    };
+        const sources = await runInChildSpan(
+          {
+            spanName: 'scheduler.list_eligible_sources',
+            attributes: buildTelemetryAttributes({
+              service: event.meta?.service,
+              stage: event.meta?.stage,
+              executionId,
+            }),
+          },
+          async () =>
+            listEligibleSources({
+              sourceRepository,
+              now: referenceNow,
+              pageSize: activeSourcesPageSize,
+            }),
+        );
+
+        const sourceItems = sources.map((source) => ({
+          sourceId: source.sourceId,
+          tenantId: source.tenantId,
+        }));
+        const sourceIds = sourceItems.map((source) => source.sourceId);
+        const eligibleSources = sourceItems.length;
+        const maxConcurrency = resolveMapMaxConcurrency(process.env.MAP_MAX_CONCURRENCY);
+        logger.info('scheduler.eligible_sources.filtered', {
+          referenceNow,
+          eligibleSources,
+          tenants: [...new Set(sourceItems.map((source) => source.tenantId))].length,
+          correlationId: executionId || null,
+        });
+
+        return {
+          contractVersion: SCHEDULER_RESULT_CONTRACT_VERSION,
+          sources: sourceItems,
+          sourceIds,
+          eligibleSources,
+          hasEligibleSources: eligibleSources > 0,
+          referenceNow,
+          generatedAt,
+          maxConcurrency,
+          traceContext,
+        };
+      },
+    });
   };
 
 export async function handler(event: SchedulerEvent = {}): Promise<SchedulerResult> {

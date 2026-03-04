@@ -25,6 +25,7 @@ import type { SourceRegistryRecord } from '../../../src/domain/sources/source-re
 import { createHandler, type CollectorDependencies } from '../../../src/handlers/collector';
 
 const VALID_SOURCE: SourceRegistryRecord = {
+  tenantId: 'tenant-acme',
   sourceId: 'source-acme',
   active: true,
   engine: 'postgres',
@@ -374,6 +375,7 @@ describe('collector handler', () => {
     const result = await handler({ sourceId: ' source-acme ' });
 
     expect(result.sourceId).toBe('source-acme');
+    expect(result.tenantId).toBe('tenant-acme');
     expect(result.processedAt).toBe('2026-03-04T11:00:00.000Z');
     expect(result.recordsSent).toBe(2);
     expect(result.schemaVersion).toBe('1.0.0');
@@ -417,6 +419,7 @@ describe('collector handler', () => {
         'collector.cursor.loaded',
         {
           sourceId: 'source-acme',
+          tenantId: 'tenant-acme',
           hasPersistedCursor: true,
           persistedCursor: '2026-03-04T09:59:00.000Z',
         },
@@ -425,6 +428,7 @@ describe('collector handler', () => {
         'collector.source_credentials.loaded',
         {
           sourceId: 'source-acme',
+          tenantId: 'tenant-acme',
           engine: 'postgres',
           attempts: 1,
           durationMs: expect.any(Number),
@@ -434,6 +438,7 @@ describe('collector handler', () => {
         'collector.source_records.collected',
         {
           sourceId: 'source-acme',
+          tenantId: 'tenant-acme',
           engine: 'postgres',
           cursor: '2026-03-04T09:59:00.000Z',
           recordsCollected: 2,
@@ -1262,6 +1267,64 @@ describe('collector handler', () => {
     );
     expect(secrets.getSecretValueCalls).toEqual([]);
     expect(postgresFactory.queryCalls).toEqual([]);
+  });
+
+  it('fails before Secrets Manager call when source secretArn is incompatible with stage policy', async () => {
+    const previousRegion = process.env.SECRETS_ALLOWED_REGION;
+    const previousAccount = process.env.SECRETS_ALLOWED_ACCOUNT_ID;
+    process.env.SECRETS_ALLOWED_REGION = 'us-east-1';
+    process.env.SECRETS_ALLOWED_ACCOUNT_ID = '123456789012';
+
+    try {
+      const sourceWithForeignSecretArn: SourceRegistryRecord = {
+        ...VALID_SOURCE,
+        sourceId: 'source-foreign-secret',
+        secretArn: 'arn:aws:secretsmanager:us-west-2:123456789012:secret:acme/source-db',
+      };
+      const repository = new SpySourceRegistryRepository(
+        new Map<string, SourceRegistryRecord>([
+          [sourceWithForeignSecretArn.sourceId, sourceWithForeignSecretArn],
+        ]),
+      );
+      const secrets = new SpySecretRepository(
+        new Map<string, string | null>([
+          [
+            sourceWithForeignSecretArn.secretArn,
+            JSON.stringify({
+              host: 'db.internal',
+              port: 5432,
+              database: 'crm',
+              username: 'collector_user',
+              password: 'collector_password',
+            }),
+          ],
+        ]),
+      );
+      const postgresFactory = new SpyPostgresQueryExecutorFactory([]);
+      const handler = createCollectorHandler({
+        sourceRegistryRepository: repository,
+        secretRepository: secrets,
+        postgresQueryExecutorFactory: postgresFactory,
+      });
+
+      await expect(handler({ sourceId: sourceWithForeignSecretArn.sourceId })).rejects.toThrow(
+        'Secret ARN policy rejected source "source-foreign-secret": secretArn region "us-west-2" is incompatible with stage "unknown" (expected "us-east-1").',
+      );
+      expect(secrets.getSecretValueCalls).toEqual([]);
+      expect(postgresFactory.queryCalls).toEqual([]);
+    } finally {
+      if (previousRegion === undefined) {
+        delete process.env.SECRETS_ALLOWED_REGION;
+      } else {
+        process.env.SECRETS_ALLOWED_REGION = previousRegion;
+      }
+
+      if (previousAccount === undefined) {
+        delete process.env.SECRETS_ALLOWED_ACCOUNT_ID;
+      } else {
+        process.env.SECRETS_ALLOWED_ACCOUNT_ID = previousAccount;
+      }
+    }
   });
 
   it('throws controlled error when secret does not exist in Secrets Manager', async () => {

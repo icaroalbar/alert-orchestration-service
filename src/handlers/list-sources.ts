@@ -5,8 +5,14 @@ import {
 } from '../domain/sources/source-registry-repository';
 import { SOURCE_ENGINES, type SourceEngine } from '../domain/sources/source-schema';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
+import {
+  buildTelemetryAttributes,
+  toTelemetryLogContext,
+  withTelemetrySpan,
+} from '../shared/observability/open-telemetry';
 
 const JSON_HEADERS = {
   'content-type': 'application/json',
@@ -26,6 +32,11 @@ export interface ListSourcesEvent {
   };
   requestContext?: {
     requestId?: string;
+    authorizer?: {
+      jwt?: {
+        claims?: Record<string, unknown>;
+      };
+    };
   };
 }
 
@@ -206,99 +217,137 @@ export const createHandler =
       headers: event.headers,
       requestId: event.requestContext?.requestId,
     });
-    logger.info('api.sources.list.received', {
-      correlationId,
-    });
-
-    const query = event.queryStringParameters ?? {};
-
-    const limit = parseLimit(query.limit);
-    if (!limit.success) {
-      logger.info('api.sources.list.rejected', {
-        correlationId,
-        statusCode: limit.response.statusCode,
-        reason: 'invalid_limit',
-      });
-      return limit.response;
-    }
-
-    const nextToken = parseNextToken(query.nextToken);
-    if (!nextToken.success) {
-      logger.info('api.sources.list.rejected', {
-        correlationId,
-        statusCode: nextToken.response.statusCode,
-        reason: 'invalid_next_token',
-      });
-      return nextToken.response;
-    }
-
-    const active = parseActive(query.active);
-    if (!active.success) {
-      logger.info('api.sources.list.rejected', {
-        correlationId,
-        statusCode: active.response.statusCode,
-        reason: 'invalid_active',
-      });
-      return active.response;
-    }
-
-    const engine = parseEngine(query.engine);
-    if (!engine.success) {
-      logger.info('api.sources.list.rejected', {
-        correlationId,
-        statusCode: engine.response.statusCode,
-        reason: 'invalid_engine',
-      });
-      return engine.response;
-    }
-
-    const params: ListSourceRegistryParams = {
-      limit: limit.value,
-      nextToken: nextToken.value,
-      active: active.value,
-      engine: engine.value,
-    };
-
-    try {
-      const result = await sourceRegistryRepository.list(params);
-      logger.info('api.sources.list.succeeded', {
-        correlationId,
-        statusCode: 200,
-        returnedItems: result.items.length,
-      });
-      return response(200, {
-        items: result.items,
-        filters: {
-          active: active.value ?? null,
-          engine: engine.value ?? null,
-        },
-        pagination: {
-          limit: limit.value,
-          nextToken: result.nextToken,
-        },
-        requestId: event.requestContext?.requestId ?? null,
-      });
-    } catch (error) {
-      if (error instanceof SourcePaginationTokenError) {
-        logger.info('api.sources.list.rejected', {
+    return withTelemetrySpan({
+      component: 'api.sources.list',
+      spanName: 'api.sources.list',
+      attributes: buildTelemetryAttributes({
+        executionId: correlationId ?? undefined,
+      }),
+      run: async ({ span, traceContext, runInChildSpan }) => {
+        logger.info('api.sources.list.received', {
           correlationId,
-          statusCode: 400,
-          reason: 'invalid_pagination_token',
         });
-        return response(400, {
-          message: error.message,
-          code: 'INVALID_PAGINATION_TOKEN',
+        logger.info('api.sources.list.trace_context', {
+          correlationId,
+          ...toTelemetryLogContext(traceContext),
         });
-      }
 
-      logger.info('api.sources.list.failed', {
-        correlationId,
-        statusCode: 500,
-      });
-      return response(500, {
-        message: 'Failed to list sources.',
-      });
-    }
+        const tenantId = resolveTenantIdFromJwtClaims(event);
+        if (!tenantId) {
+          logger.info('api.sources.list.rejected', {
+            correlationId,
+            statusCode: 401,
+            reason: 'tenant_context_missing',
+          });
+          return response(401, {
+            message: 'Missing tenant context in JWT claims.',
+            code: 'TENANT_CONTEXT_MISSING',
+          });
+        }
+        span.setAttribute('tenantId', tenantId);
+
+        const query = event.queryStringParameters ?? {};
+
+        const limit = parseLimit(query.limit);
+        if (!limit.success) {
+          logger.info('api.sources.list.rejected', {
+            correlationId,
+            statusCode: limit.response.statusCode,
+            reason: 'invalid_limit',
+          });
+          return limit.response;
+        }
+
+        const nextToken = parseNextToken(query.nextToken);
+        if (!nextToken.success) {
+          logger.info('api.sources.list.rejected', {
+            correlationId,
+            statusCode: nextToken.response.statusCode,
+            reason: 'invalid_next_token',
+          });
+          return nextToken.response;
+        }
+
+        const active = parseActive(query.active);
+        if (!active.success) {
+          logger.info('api.sources.list.rejected', {
+            correlationId,
+            statusCode: active.response.statusCode,
+            reason: 'invalid_active',
+          });
+          return active.response;
+        }
+
+        const engine = parseEngine(query.engine);
+        if (!engine.success) {
+          logger.info('api.sources.list.rejected', {
+            correlationId,
+            statusCode: engine.response.statusCode,
+            reason: 'invalid_engine',
+          });
+          return engine.response;
+        }
+
+        const params: ListSourceRegistryParams = {
+          tenantId,
+          limit: limit.value,
+          nextToken: nextToken.value,
+          active: active.value,
+          engine: engine.value,
+        };
+
+        try {
+          const result = await runInChildSpan(
+            {
+              spanName: 'api.sources.list.repository.list',
+              attributes: buildTelemetryAttributes({
+                tenantId,
+                executionId: correlationId ?? undefined,
+              }),
+            },
+            async () => sourceRegistryRepository.list(params),
+          );
+          logger.info('api.sources.list.succeeded', {
+            correlationId,
+            statusCode: 200,
+            returnedItems: result.items.length,
+          });
+          return response(200, {
+            items: result.items,
+            filters: {
+              tenantId,
+              active: active.value ?? null,
+              engine: engine.value ?? null,
+            },
+            pagination: {
+              limit: limit.value,
+              nextToken: result.nextToken,
+            },
+            requestId: event.requestContext?.requestId ?? null,
+          });
+        } catch (error) {
+          if (error instanceof SourcePaginationTokenError) {
+            logger.info('api.sources.list.rejected', {
+              correlationId,
+              statusCode: 400,
+              reason: 'invalid_pagination_token',
+            });
+            return response(400, {
+              message: error.message,
+              code: 'INVALID_PAGINATION_TOKEN',
+            });
+          }
+
+          logger.info('api.sources.list.failed', {
+            correlationId,
+            statusCode: 500,
+          });
+          return response(500, {
+            message: 'Failed to list sources.',
+          });
+        }
+      },
+    });
   };
 
 export async function handler(event: ListSourcesEvent): Promise<ListSourcesResponse> {

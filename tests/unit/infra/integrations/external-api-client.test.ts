@@ -56,6 +56,7 @@ describe('createIntegrationExternalApiClient', () => {
         payload: {
           eventType: 'customer.persisted',
           sourceId: 'source-1',
+          tenantId: 'tenant-acme',
           correlationId: 'exec-1',
           publishedAt: '2026-03-04T10:00:00.000Z',
           customer: { id: 1 },
@@ -76,6 +77,7 @@ describe('createIntegrationExternalApiClient', () => {
           eventType: 'customer.persisted',
           integrationId: 'salesforce',
           sourceId: 'source-1',
+          tenantId: 'tenant-acme',
           correlationId: 'exec-1',
           occurredAt: '2026-03-04T10:00:00.000Z',
           customer: { id: 1 },
@@ -123,6 +125,7 @@ describe('createIntegrationExternalApiClient', () => {
         payload: {
           eventType: 'customer.persisted',
           sourceId: 'source-1',
+          tenantId: 'tenant-acme',
           correlationId: 'exec-1',
           publishedAt: '2026-03-04T10:00:00.000Z',
           customer: { id: 1 },
@@ -149,6 +152,7 @@ describe('createIntegrationExternalApiClient', () => {
         payload: {
           eventType: 'customer.persisted',
           sourceId: 'source-1',
+          tenantId: 'tenant-acme',
           correlationId: 'exec-1',
           publishedAt: '2026-03-04T10:00:00.000Z',
           customer: { id: 1 },
@@ -176,6 +180,7 @@ describe('createIntegrationExternalApiClient', () => {
         payload: {
           eventType: 'customer.persisted',
           sourceId: 'source-1',
+          tenantId: 'tenant-acme',
           correlationId: 'exec-1',
           publishedAt: '2026-03-04T10:00:00.000Z',
           customer: { id: 1 },

@@ -7,6 +7,7 @@ import {
 } from '../../../../src/domain/sources/source-schema';
 
 const validIntervalPayload = {
+  tenantId: 'tenant-acme',
   sourceId: 'source-acme',
   active: true,
   engine: 'postgres',
@@ -63,6 +64,7 @@ describe('source schema v1', () => {
     }
 
     const fields = result.errors.map((entry) => entry.field);
+    expect(fields).toContain('tenantId');
     expect(fields).toContain('sourceId');
     expect(fields).toContain('engine');
     expect(fields).toContain('scheduleType');

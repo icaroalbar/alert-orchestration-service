@@ -4,6 +4,7 @@ import type { CollectorStandardizedRecord } from '../../domain/collector/collect
 
 export interface PublishCustomerEventsParams {
   sourceId: string;
+  tenantId: string;
   correlationId: string;
   records: readonly CollectorStandardizedRecord[];
   publishedAt: string;
@@ -48,6 +49,7 @@ export const createSnsCustomerEventsPublisher = ({
 
   return async ({
     sourceId,
+    tenantId,
     correlationId,
     records,
     publishedAt,
@@ -62,6 +64,7 @@ export const createSnsCustomerEventsPublisher = ({
       const message = {
         eventType: 'customer.persisted',
         sourceId,
+        tenantId,
         correlationId,
         publishedAt,
         integrationTargets: normalizedIntegrationTargets,
@@ -76,6 +79,10 @@ export const createSnsCustomerEventsPublisher = ({
             sourceId: {
               DataType: 'String',
               StringValue: sourceId,
+            },
+            tenantId: {
+              DataType: 'String',
+              StringValue: tenantId,
             },
             correlationId: {
               DataType: 'String',

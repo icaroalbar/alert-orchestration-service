@@ -5,7 +5,14 @@ import {
   validateSourceSchemaV1,
 } from './source-schema';
 
-const IMMUTABLE_FIELDS = ['sourceId', 'engine', 'schemaVersion', 'createdAt', 'updatedAt'] as const;
+const IMMUTABLE_FIELDS = [
+  'tenantId',
+  'sourceId',
+  'engine',
+  'schemaVersion',
+  'createdAt',
+  'updatedAt',
+] as const;
 const MUTABLE_FIELDS = [
   'active',
   'secretArn',
@@ -141,6 +148,7 @@ export const mergeAndValidateSourcePatch = (
   const nextSchedule = resolveSourceSchedule(current, patch);
 
   const validation = validateSourceSchemaV1({
+    tenantId: current.tenantId,
     sourceId: current.sourceId,
     active: patch.active ?? current.active,
     engine: current.engine,

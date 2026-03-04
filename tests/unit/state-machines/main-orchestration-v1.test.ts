@@ -108,6 +108,7 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(scheduler.Next).toBe('ProcessEligibleSources');
     const schedulerParameters = asObject(scheduler.Parameters);
     expect(schedulerParameters['now.$']).toBe('$.schedulerInput.now');
+    expect(schedulerParameters['meta.$']).toBe('$.meta');
     const schedulerRetry = scheduler.Retry as unknown[];
     expect(Array.isArray(schedulerRetry)).toBe(true);
     expect(schedulerRetry).toHaveLength(2);
@@ -137,13 +138,22 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(schedulerCatchEntry.Next).toBe('BuildSchedulerFailureOutput');
 
     expect(processEligibleSources.Type).toBe('Map');
-    expect(processEligibleSources.ItemsPath).toBe('$.schedulerResult.sourceIds');
+    expect(processEligibleSources.ItemsPath).toBe('$.schedulerResult.sources');
     expect(processEligibleSources.MaxConcurrencyPath).toBe('$.schedulerResult.maxConcurrency');
     expect(processEligibleSources.ResultPath).toBe('$.collectorResults');
     expect(processEligibleSources.Next).toBe('BuildExecutionOutput');
     const processEligibleSourcesParameters = asObject(processEligibleSources.Parameters);
-    expect(processEligibleSourcesParameters['sourceId.$']).toBe('$$.Map.Item.Value');
-    expect(processEligibleSourcesParameters['meta.$']).toBe('$.meta');
+    expect(processEligibleSourcesParameters['sourceId.$']).toBe('$$.Map.Item.Value.sourceId');
+    expect(processEligibleSourcesParameters['tenantId.$']).toBe('$$.Map.Item.Value.tenantId');
+    const processEligibleSourcesMeta = asObject(processEligibleSourcesParameters.meta);
+    expect(processEligibleSourcesMeta['executionId.$']).toBe('$.meta.executionId');
+    expect(processEligibleSourcesMeta['stateMachineId.$']).toBe('$.meta.stateMachineId');
+    expect(processEligibleSourcesMeta['startedAt.$']).toBe('$.meta.startedAt');
+    expect(processEligibleSourcesMeta['trigger.$']).toBe('$.meta.trigger');
+    expect(processEligibleSourcesMeta['source.$']).toBe('$.meta.source');
+    expect(processEligibleSourcesMeta['stage.$']).toBe('$.meta.stage');
+    expect(processEligibleSourcesMeta['service.$']).toBe('$.meta.service');
+    expect(processEligibleSourcesMeta['traceContext.$']).toBe('$.schedulerResult.traceContext');
     const iterator = asObject(processEligibleSources.Iterator);
     expect(iterator.StartAt).toBe('InvokeCollector');
     const iteratorStates = asObject(iterator.States);
@@ -162,6 +172,7 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(invokeCollectorResource['Fn::GetAtt']).toEqual(['CollectorLambdaFunction', 'Arn']);
     const invokeCollectorParameters = asObject(invokeCollector.Parameters);
     expect(invokeCollectorParameters['sourceId.$']).toBe('$.sourceId');
+    expect(invokeCollectorParameters['tenantId.$']).toBe('$.tenantId');
     expect(invokeCollectorParameters['meta.$']).toBe('$.meta');
     const invokeCollectorRetry = invokeCollector.Retry as unknown[];
     expect(Array.isArray(invokeCollectorRetry)).toBe(true);
@@ -194,6 +205,7 @@ describe('main-orchestration-v1.asl.json', () => {
     const buildItemSuccessParameters = asObject(buildItemSuccessResult.Parameters);
     const buildItemSuccessPayload = asObject(buildItemSuccessParameters.result);
     expect(buildItemSuccessPayload['sourceId.$']).toBe('$.sourceId');
+    expect(buildItemSuccessPayload['tenantId.$']).toBe('$.tenantId');
     expect(buildItemSuccessPayload.status).toBe('SUCCEEDED');
     expect(buildItemSuccessPayload['processedAt.$']).toBe('$.collectorResult.processedAt');
     expect(buildItemSuccessPayload['recordsSent.$']).toBe('$.collectorResult.recordsSent');
@@ -222,6 +234,7 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(returnItemSuccessResult.End).toBe(true);
     const returnItemSuccessParameters = asObject(returnItemSuccessResult.Parameters);
     expect(returnItemSuccessParameters['sourceId.$']).toBe('$.result.sourceId');
+    expect(returnItemSuccessParameters['tenantId.$']).toBe('$.result.tenantId');
     expect(returnItemSuccessParameters['status.$']).toBe('$.result.status');
     expect(returnItemSuccessParameters['processedAt.$']).toBe('$.result.processedAt');
     expect(returnItemSuccessParameters['recordsSent.$']).toBe('$.result.recordsSent');
@@ -231,6 +244,7 @@ describe('main-orchestration-v1.asl.json', () => {
     const buildItemFailureParameters = asObject(buildItemFailureResult.Parameters);
     const buildItemFailurePayload = asObject(buildItemFailureParameters.result);
     expect(buildItemFailurePayload['sourceId.$']).toBe('$.sourceId');
+    expect(buildItemFailurePayload['tenantId.$']).toBe('$.tenantId');
     expect(buildItemFailurePayload.status).toBe('FAILED');
     expect(buildItemFailurePayload['error.$']).toBe('$.collectorError.Error');
     expect(buildItemFailurePayload['cause.$']).toBe('$.collectorError.Cause');
@@ -259,6 +273,7 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(returnItemFailureResult.End).toBe(true);
     const returnItemFailureParameters = asObject(returnItemFailureResult.Parameters);
     expect(returnItemFailureParameters['sourceId.$']).toBe('$.result.sourceId');
+    expect(returnItemFailureParameters['tenantId.$']).toBe('$.result.tenantId');
     expect(returnItemFailureParameters['status.$']).toBe('$.result.status');
     expect(returnItemFailureParameters['error.$']).toBe('$.result.error');
     expect(returnItemFailureParameters['cause.$']).toBe('$.result.cause');
@@ -268,7 +283,7 @@ describe('main-orchestration-v1.asl.json', () => {
     expect(buildExecutionOutput.Next).toBe('PublishExecutionSuccessMetric');
     const outputParameters = asObject(buildExecutionOutput.Parameters);
     expect(outputParameters['meta.$']).toBe('$.meta');
-    expect(outputParameters['sources.$']).toBe('$.schedulerResult.sourceIds');
+    expect(outputParameters['sources.$']).toBe('$.schedulerResult.sources');
     expect(outputParameters['results.$']).toBe('$.collectorResults');
     const schedulerOutput = asObject(outputParameters.scheduler);
     expect(schedulerOutput['contractVersion.$']).toBe('$.schedulerResult.contractVersion');
@@ -354,6 +369,7 @@ describe('main-orchestration-v1.asl.json', () => {
     const sourceARawResult = asObject(
       materializeParameters(buildItemSuccessParameters, {
         sourceId: 'source-a',
+        tenantId: 'tenant-a',
         meta: {
           stage: 'dev',
           executionId: 'exec-123',
@@ -370,6 +386,7 @@ describe('main-orchestration-v1.asl.json', () => {
     const sourceBRawResult = asObject(
       materializeParameters(buildItemFailureParameters, {
         sourceId: 'source-b',
+        tenantId: 'tenant-b',
         meta: {
           stage: 'dev',
           executionId: 'exec-123',
@@ -386,6 +403,7 @@ describe('main-orchestration-v1.asl.json', () => {
     const sourceCRawResult = asObject(
       materializeParameters(buildItemSuccessParameters, {
         sourceId: 'source-c',
+        tenantId: 'tenant-c',
         meta: {
           stage: 'dev',
           executionId: 'exec-123',
@@ -407,7 +425,11 @@ describe('main-orchestration-v1.asl.json', () => {
           stage: 'dev',
         },
         schedulerResult: {
-          sourceIds: ['source-a', 'source-b', 'source-c'],
+          sources: [
+            { sourceId: 'source-a', tenantId: 'tenant-a' },
+            { sourceId: 'source-b', tenantId: 'tenant-b' },
+            { sourceId: 'source-c', tenantId: 'tenant-c' },
+          ],
           contractVersion: 'scheduler-output.v1',
           referenceNow: '2026-03-03T00:00:00.000Z',
           hasEligibleSources: true,
@@ -420,7 +442,11 @@ describe('main-orchestration-v1.asl.json', () => {
     );
 
     const sources = asArray(executionOutput.sources);
-    expect(sources).toEqual(['source-a', 'source-b', 'source-c']);
+    expect(sources).toEqual([
+      { sourceId: 'source-a', tenantId: 'tenant-a' },
+      { sourceId: 'source-b', tenantId: 'tenant-b' },
+      { sourceId: 'source-c', tenantId: 'tenant-c' },
+    ]);
 
     const results = asArray(executionOutput.results).map((entry) => asObject(entry));
     expect(results).toHaveLength(3);
@@ -457,7 +483,7 @@ describe('main-orchestration-v1.asl.json', () => {
           stage: 'dev',
         },
         schedulerResult: {
-          sourceIds: [],
+          sources: [],
           contractVersion: 'scheduler-output.v1',
           referenceNow: '2026-03-04T09:00:00.000Z',
           hasEligibleSources: false,

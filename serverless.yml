@@ -20,6 +20,9 @@ provider:
   environment:
     STAGE: ${self:provider.stage}
     SERVICE_NAME: ${self:service}
+    OTEL_SERVICE_NAME: ${env:OTEL_SERVICE_NAME, 'alert-orchestration-service'}
+    SECRETS_ALLOWED_REGION: ${self:custom.stages.${self:provider.stage}.secretsAllowedRegion}
+    SECRETS_ALLOWED_ACCOUNT_ID: ${self:custom.stages.${self:provider.stage}.secretsAllowedAccountId}
     SOURCES_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.sourcesTableName}
     CURSORS_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.cursorsTableName}
     IDEMPOTENCY_TABLE_NAME: ${self:custom.stages.${self:provider.stage}.idempotencyTableName}
@@ -39,7 +42,6 @@ provider:
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS, '200'}
     OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE: ${env:OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE, '2'}
     COLLECTOR_IDEMPOTENCY_TTL_SECONDS: ${env:COLLECTOR_IDEMPOTENCY_TTL_SECONDS, '604800'}
-    CONSUMER_IDEMPOTENCY_TTL_SECONDS: ${env:CONSUMER_IDEMPOTENCY_TTL_SECONDS, '604800'}
     INTEGRATION_API_TIMEOUT_MS: ${env:INTEGRATION_API_TIMEOUT_MS, '5000'}
     METRICS_NAMESPACE: ${env:METRICS_NAMESPACE, 'AlertOrchestrationService/Runtime'}
     INTEGRATION_TARGETS: ${env:INTEGRATION_TARGETS, 'salesforce|hubspot'}
@@ -102,6 +104,8 @@ custom:
   stages:
     dev:
       region: us-east-1
+      secretsAllowedRegion: us-east-1
+      secretsAllowedAccountId: ${env:SECRETS_ALLOWED_ACCOUNT_ID_DEV, ''}
       logRetentionInDays: 7
       tracing: false
       schedulerMemorySize: 256
@@ -147,6 +151,8 @@ custom:
       orchestrationScheduleExpression: cron(0/30 * * * ? *)
     stg:
       region: us-east-1
+      secretsAllowedRegion: us-east-1
+      secretsAllowedAccountId: ${env:SECRETS_ALLOWED_ACCOUNT_ID_STG, ''}
       logRetentionInDays: 14
       tracing: true
       schedulerMemorySize: 256
@@ -192,6 +198,8 @@ custom:
       orchestrationScheduleExpression: cron(0/15 * * * ? *)
     prod:
       region: us-east-1
+      secretsAllowedRegion: us-east-1
+      secretsAllowedAccountId: ${env:SECRETS_ALLOWED_ACCOUNT_ID_PROD, ''}
       logRetentionInDays: 30
       tracing: true
       schedulerMemorySize: 384
@@ -679,15 +687,6 @@ resources:
                     - logs:PutLogEvents
                   Resource:
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.salesforceConsumerFunctionName}:*
-                - Sid: WriteSalesforceConsumerIdempotencyClaims
-                  Effect: Allow
-                  Action:
-                    - dynamodb:PutItem
-                    - dynamodb:UpdateItem
-                  Resource:
-                    - Fn::GetAtt:
-                        - IdempotencyTable
-                        - Arn
                 - Sid: ReadSalesforceOutboundAuthSecret
                   Effect: Allow
                   Action:
@@ -738,15 +737,6 @@ resources:
                     - logs:PutLogEvents
                   Resource:
                     - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${self:custom.naming.hubspotConsumerFunctionName}:*
-                - Sid: WriteHubspotConsumerIdempotencyClaims
-                  Effect: Allow
-                  Action:
-                    - dynamodb:PutItem
-                    - dynamodb:UpdateItem
-                  Resource:
-                    - Fn::GetAtt:
-                        - IdempotencyTable
-                        - Arn
                 - Sid: ReadHubspotOutboundAuthSecret
                   Effect: Allow
                   Action:

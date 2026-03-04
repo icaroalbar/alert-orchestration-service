@@ -50,7 +50,7 @@ Componentes-chave:
 4. Coletora carrega configuração/segredo, executa query incremental e normaliza para modelo canônico.
 5. Lote válido é enviado para API oficial (`upsert-batch`) com idempotência por `sourceId + cursor + recordId`.
 6. Registros persistidos geram evento `customer.persisted` no SNS.
-7. Filas SQS por integração recebem fan-out; consumidores entregam para APIs externas.
+7. Filas SQS por integração recebem fan-out; consumidores deduplicam no lote por `correlationId` e entregam para APIs externas.
 8. Falhas de entrega excedentes são roteadas para DLQ, com alarmes e reprocessamento manual.
 
 ## Variáveis de ambiente essenciais
@@ -337,6 +337,8 @@ npm run dlq:reprocess -- --integration all --dry-run --since 2026-03-04T00:00:00
 Guia operacional completo: `docs/integrations/dlq-reprocessing.md`.
 
 Playbook de resposta para alarmes operacionais (ingestão + integrações + Step Functions): `docs/observability/operational-alarms-playbook.md`.
+
+Baseline de instrumentação OpenTelemetry para Lambdas críticas (spans, propagação e logs de trace): `docs/observability/open-telemetry-baseline.md`.
 
 ## Ambiente de testes (isolado)
 

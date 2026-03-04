@@ -297,4 +297,37 @@ describe('scheduler handler', () => {
       'Invalid MAP_MAX_CONCURRENCY="0". Expected integer between 1 and 40.',
     );
   });
+
+  it('returns stable payload contract for Step Functions and propagates execution correlation id', async () => {
+    const logger = { info: jest.fn() };
+    const repository = new SpySourceRepository([{ items: [], nextToken: null }]);
+    const handler = createHandler({
+      sourceRepository: repository,
+      now: () => '2026-03-04T10:00:00.000Z',
+      activeSourcesPageSize: 10,
+      logger,
+    });
+
+    const result = await handler({
+      now: '2026-03-04T10:01:00.000Z',
+      meta: {
+        executionId: ' exec-123 ',
+      },
+    });
+
+    expect(result).toEqual({
+      contractVersion: 'scheduler-output.v1',
+      sourceIds: [],
+      eligibleSources: 0,
+      hasEligibleSources: false,
+      referenceNow: '2026-03-04T10:01:00.000Z',
+      generatedAt: '2026-03-04T10:00:00.000Z',
+      maxConcurrency: 5,
+    });
+    expect(logger.info).toHaveBeenCalledWith('scheduler.eligible_sources.filtered', {
+      referenceNow: '2026-03-04T10:01:00.000Z',
+      eligibleSources: 0,
+      correlationId: 'exec-123',
+    });
+  });
 });

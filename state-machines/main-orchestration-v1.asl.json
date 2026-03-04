@@ -60,10 +60,11 @@
     },
     "ProcessEligibleSources": {
       "Type": "Map",
-      "ItemsPath": "$.schedulerResult.sourceIds",
+      "ItemsPath": "$.schedulerResult.sources",
       "MaxConcurrencyPath": "$.schedulerResult.maxConcurrency",
       "Parameters": {
-        "sourceId.$": "$$.Map.Item.Value",
+        "sourceId.$": "$$.Map.Item.Value.sourceId",
+        "tenantId.$": "$$.Map.Item.Value.tenantId",
         "meta.$": "$.meta"
       },
       "Iterator": {
@@ -76,6 +77,7 @@
             },
             "Parameters": {
               "sourceId.$": "$.sourceId",
+              "tenantId.$": "$.tenantId",
               "meta.$": "$.meta"
             },
             "Retry": [
@@ -112,6 +114,7 @@
             "Parameters": {
               "result": {
                 "sourceId.$": "$.sourceId",
+                "tenantId.$": "$.tenantId",
                 "status": "SUCCEEDED",
                 "processedAt.$": "$.collectorResult.processedAt",
                 "recordsSent.$": "$.collectorResult.recordsSent"
@@ -175,6 +178,7 @@
             "Type": "Pass",
             "Parameters": {
               "sourceId.$": "$.result.sourceId",
+              "tenantId.$": "$.result.tenantId",
               "status.$": "$.result.status",
               "processedAt.$": "$.result.processedAt",
               "recordsSent.$": "$.result.recordsSent"
@@ -186,6 +190,7 @@
             "Parameters": {
               "result": {
                 "sourceId.$": "$.sourceId",
+                "tenantId.$": "$.tenantId",
                 "status": "FAILED",
                 "error.$": "$.collectorError.Error",
                 "cause.$": "$.collectorError.Cause"
@@ -249,6 +254,7 @@
             "Type": "Pass",
             "Parameters": {
               "sourceId.$": "$.result.sourceId",
+              "tenantId.$": "$.result.tenantId",
               "status.$": "$.result.status",
               "error.$": "$.result.error",
               "cause.$": "$.result.cause"
@@ -264,7 +270,7 @@
       "Type": "Pass",
       "Parameters": {
         "meta.$": "$.meta",
-        "sources.$": "$.schedulerResult.sourceIds",
+        "sources.$": "$.schedulerResult.sources",
         "results.$": "$.collectorResults",
         "scheduler": {
           "contractVersion.$": "$.schedulerResult.contractVersion",

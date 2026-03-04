@@ -25,6 +25,7 @@ import type { SourceRegistryRecord } from '../../../src/domain/sources/source-re
 import { createHandler, type CollectorDependencies } from '../../../src/handlers/collector';
 
 const VALID_SOURCE: SourceRegistryRecord = {
+  tenantId: 'tenant-acme',
   sourceId: 'source-acme',
   active: true,
   engine: 'postgres',
@@ -374,6 +375,7 @@ describe('collector handler', () => {
     const result = await handler({ sourceId: ' source-acme ' });
 
     expect(result.sourceId).toBe('source-acme');
+    expect(result.tenantId).toBe('tenant-acme');
     expect(result.processedAt).toBe('2026-03-04T11:00:00.000Z');
     expect(result.recordsSent).toBe(2);
     expect(result.schemaVersion).toBe('1.0.0');
@@ -417,6 +419,7 @@ describe('collector handler', () => {
         'collector.cursor.loaded',
         {
           sourceId: 'source-acme',
+          tenantId: 'tenant-acme',
           hasPersistedCursor: true,
           persistedCursor: '2026-03-04T09:59:00.000Z',
         },
@@ -425,6 +428,7 @@ describe('collector handler', () => {
         'collector.source_credentials.loaded',
         {
           sourceId: 'source-acme',
+          tenantId: 'tenant-acme',
           engine: 'postgres',
           attempts: 1,
           durationMs: expect.any(Number),
@@ -434,6 +438,7 @@ describe('collector handler', () => {
         'collector.source_records.collected',
         {
           sourceId: 'source-acme',
+          tenantId: 'tenant-acme',
           engine: 'postgres',
           cursor: '2026-03-04T09:59:00.000Z',
           recordsCollected: 2,

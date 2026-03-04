@@ -23,6 +23,7 @@ describe('createSnsCustomerEventsPublisher', () => {
 
     const result = await publisher({
       sourceId: 'source-acme',
+      tenantId: 'tenant-acme',
       correlationId: 'exec-123',
       publishedAt: '2026-03-04T10:00:00.000Z',
       records: [
@@ -40,6 +41,10 @@ describe('createSnsCustomerEventsPublisher', () => {
         DataType: 'String',
         StringValue: 'source-acme',
       },
+      tenantId: {
+        DataType: 'String',
+        StringValue: 'tenant-acme',
+      },
       correlationId: {
         DataType: 'String',
         StringValue: 'exec-123',
@@ -51,6 +56,7 @@ describe('createSnsCustomerEventsPublisher', () => {
     });
 
     const firstMessage = JSON.parse(firstCommand.input.Message ?? '{}') as Record<string, unknown>;
+    expect(firstMessage.tenantId).toBe('tenant-acme');
     expect(firstMessage.integrationTargets).toEqual(['salesforce', 'hubspot']);
   });
 
@@ -64,6 +70,7 @@ describe('createSnsCustomerEventsPublisher', () => {
 
     const result = await publisher({
       sourceId: 'source-acme',
+      tenantId: 'tenant-acme',
       correlationId: 'exec-123',
       publishedAt: '2026-03-04T10:00:00.000Z',
       records: [],

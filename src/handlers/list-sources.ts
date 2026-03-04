@@ -5,6 +5,7 @@ import {
 } from '../domain/sources/source-registry-repository';
 import { SOURCE_ENGINES, type SourceEngine } from '../domain/sources/source-schema';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
 
@@ -26,6 +27,11 @@ export interface ListSourcesEvent {
   };
   requestContext?: {
     requestId?: string;
+    authorizer?: {
+      jwt?: {
+        claims?: Record<string, unknown>;
+      };
+    };
   };
 }
 
@@ -210,6 +216,19 @@ export const createHandler =
       correlationId,
     });
 
+    const tenantId = resolveTenantIdFromJwtClaims(event);
+    if (!tenantId) {
+      logger.info('api.sources.list.rejected', {
+        correlationId,
+        statusCode: 401,
+        reason: 'tenant_context_missing',
+      });
+      return response(401, {
+        message: 'Missing tenant context in JWT claims.',
+        code: 'TENANT_CONTEXT_MISSING',
+      });
+    }
+
     const query = event.queryStringParameters ?? {};
 
     const limit = parseLimit(query.limit);
@@ -253,6 +272,7 @@ export const createHandler =
     }
 
     const params: ListSourceRegistryParams = {
+      tenantId,
       limit: limit.value,
       nextToken: nextToken.value,
       active: active.value,
@@ -269,6 +289,7 @@ export const createHandler =
       return response(200, {
         items: result.items,
         filters: {
+          tenantId,
           active: active.value ?? null,
           engine: engine.value ?? null,
         },

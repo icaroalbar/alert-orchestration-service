@@ -20,6 +20,10 @@ export interface SchedulerEvent {
 
 export interface SchedulerResult {
   contractVersion: string;
+  sources: Array<{
+    sourceId: string;
+    tenantId: string;
+  }>;
   sourceIds: string[];
   eligibleSources: number;
   hasEligibleSources: boolean;
@@ -112,17 +116,23 @@ export const createHandler =
       pageSize: activeSourcesPageSize,
     });
 
-    const sourceIds = sources.map((source) => source.sourceId);
-    const eligibleSources = sourceIds.length;
+    const sourceItems = sources.map((source) => ({
+      sourceId: source.sourceId,
+      tenantId: source.tenantId,
+    }));
+    const sourceIds = sourceItems.map((source) => source.sourceId);
+    const eligibleSources = sourceItems.length;
     const maxConcurrency = resolveMapMaxConcurrency(process.env.MAP_MAX_CONCURRENCY);
     logger.info('scheduler.eligible_sources.filtered', {
       referenceNow,
       eligibleSources,
+      tenants: [...new Set(sourceItems.map((source) => source.tenantId))].length,
       correlationId: event.meta?.executionId?.trim() || null,
     });
 
     return {
       contractVersion: SCHEDULER_RESULT_CONTRACT_VERSION,
+      sources: sourceItems,
       sourceIds,
       eligibleSources,
       hasEligibleSources: eligibleSources > 0,

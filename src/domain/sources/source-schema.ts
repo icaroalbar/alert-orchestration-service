@@ -11,6 +11,7 @@ export type SourceScheduleType = (typeof SOURCE_SCHEDULE_TYPES)[number];
 export type SourceFieldMap = Record<string, string>;
 
 export interface SourceBaseSchemaV1 {
+  tenantId: string;
   sourceId: string;
   active: boolean;
   engine: SourceEngine;
@@ -67,6 +68,7 @@ export type SourceSchemaValidationResult =
 export const sourceSchemaV1Definition = Object.freeze({
   version: SOURCE_SCHEMA_VERSION,
   requiredFields: [
+    'tenantId',
     'sourceId',
     'active',
     'engine',
@@ -176,6 +178,7 @@ export function validateSourceSchemaV1(input: unknown): SourceSchemaValidationRe
     };
   }
 
+  const tenantIdValue = input.tenantId;
   const sourceIdValue = input.sourceId;
   const activeValue = input.active;
   const engineValue = input.engine;
@@ -187,6 +190,19 @@ export function validateSourceSchemaV1(input: unknown): SourceSchemaValidationRe
   const intervalMinutesValue = input.intervalMinutes;
   const cronExprValue = input.cronExpr;
   const nextRunAtValue = input.nextRunAt;
+
+  let tenantId: string | undefined;
+  if (!hasOwn(input, 'tenantId')) {
+    errors.push({ field: 'tenantId', code: 'REQUIRED', message: 'tenantId is required.' });
+  } else if (!isNonEmptyString(tenantIdValue)) {
+    errors.push({
+      field: 'tenantId',
+      code: 'INVALID_TYPE',
+      message: 'tenantId must be a non-empty string.',
+    });
+  } else {
+    tenantId = tenantIdValue.trim();
+  }
 
   let sourceId: string | undefined;
   if (!hasOwn(input, 'sourceId')) {
@@ -423,6 +439,7 @@ export function validateSourceSchemaV1(input: unknown): SourceSchemaValidationRe
   }
 
   const base: SourceBaseSchemaV1 = {
+    tenantId: tenantId as string,
     sourceId: sourceId as string,
     active: active as boolean,
     engine: engine as SourceEngine,

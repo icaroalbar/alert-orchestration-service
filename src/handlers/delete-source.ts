@@ -4,6 +4,7 @@ import {
   type SourceRegistryRepository,
 } from '../domain/sources/source-registry-repository';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
 import { nowIso } from '../shared/time/now-iso';
@@ -19,6 +20,11 @@ export interface DeleteSourceEvent {
   };
   requestContext?: {
     requestId?: string;
+    authorizer?: {
+      jwt?: {
+        claims?: Record<string, unknown>;
+      };
+    };
   };
 }
 
@@ -116,12 +122,27 @@ export const createHandler =
       return sourceId.response;
     }
 
+    const tenantId = resolveTenantIdFromJwtClaims(event);
+    if (!tenantId) {
+      logger.info('api.sources.delete.rejected', {
+        correlationId,
+        statusCode: 401,
+        sourceId: sourceId.value,
+        reason: 'tenant_context_missing',
+      });
+      return response(401, {
+        message: 'Missing tenant context in JWT claims.',
+        code: 'TENANT_CONTEXT_MISSING',
+      });
+    }
+
     const current = await sourceRegistryRepository.getById(sourceId.value);
-    if (!current) {
+    if (!current || current.tenantId !== tenantId) {
       logger.info('api.sources.delete.not_found', {
         correlationId,
         statusCode: 404,
         sourceId: sourceId.value,
+        tenantId,
       });
       return response(404, {
         message: `Source "${sourceId.value}" was not found.`,
@@ -154,11 +175,12 @@ export const createHandler =
     } catch (error) {
       if (error instanceof SourceVersionConflictError) {
         const latest = await sourceRegistryRepository.getById(sourceId.value);
-        if (!latest) {
+        if (!latest || latest.tenantId !== tenantId) {
           logger.info('api.sources.delete.not_found', {
             correlationId,
             statusCode: 404,
             sourceId: sourceId.value,
+            tenantId,
           });
           return response(404, {
             message: `Source "${sourceId.value}" was not found.`,

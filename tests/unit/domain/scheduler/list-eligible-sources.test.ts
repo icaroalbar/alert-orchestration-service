@@ -37,6 +37,7 @@ describe('listEligibleSources', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-a',
             nextRunAt: '2026-03-04T09:00:00.000Z',
             scheduleType: 'interval',
@@ -48,6 +49,7 @@ describe('listEligibleSources', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-b',
             nextRunAt: '2026-03-04T09:05:00.000Z',
             scheduleType: 'interval',
@@ -78,6 +80,7 @@ describe('listEligibleSources', () => {
     ]);
     expect(result).toEqual([
       {
+        tenantId: 'tenant-acme',
         sourceId: 'source-a',
         nextRunAt: '2026-03-04T09:00:00.000Z',
         scheduleType: 'interval',
@@ -91,6 +94,7 @@ describe('listEligibleSources', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-cron',
             nextRunAt: '2026-03-04T09:00:00.000Z',
             scheduleType: 'cron',
@@ -117,6 +121,7 @@ describe('listEligibleSources', () => {
     ]);
     expect(result).toEqual([
       {
+        tenantId: 'tenant-acme',
         sourceId: 'source-cron',
         nextRunAt: '2026-03-04T09:00:00.000Z',
         scheduleType: 'cron',
@@ -130,6 +135,7 @@ describe('listEligibleSources', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-a',
             nextRunAt: '2026-03-04T08:55:00.000Z',
             scheduleType: 'interval',
@@ -141,12 +147,14 @@ describe('listEligibleSources', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-a',
             nextRunAt: '2026-03-04T08:55:00.000Z',
             scheduleType: 'interval',
             intervalMinutes: 5,
           },
           {
+            tenantId: 'tenant-acme',
             sourceId: 'source-b',
             nextRunAt: '2026-03-04T09:10:00.000Z',
             scheduleType: 'cron',
@@ -166,6 +174,7 @@ describe('listEligibleSources', () => {
     expect(repository.reserveCalls).toHaveLength(1);
     expect(result).toEqual([
       {
+        tenantId: 'tenant-acme',
         sourceId: 'source-a',
         nextRunAt: '2026-03-04T08:55:00.000Z',
         scheduleType: 'interval',
@@ -180,6 +189,7 @@ describe('listEligibleSources', () => {
         {
           items: [
             {
+              tenantId: 'tenant-acme',
               sourceId: 'source-a',
               nextRunAt: '2026-03-04T08:55:00.000Z',
               scheduleType: 'interval',
@@ -207,6 +217,7 @@ describe('listEligibleSources', () => {
       {
         items: [
           {
+            tenantId: 'tenant-acme',
             sourceId: '',
             nextRunAt: '2026-03-04T09:00:00.000Z',
             scheduleType: 'interval',

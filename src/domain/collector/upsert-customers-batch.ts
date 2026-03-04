@@ -45,6 +45,7 @@ export type UpsertCustomersBatchHttpClient = (request: {
 
 export interface UpsertCustomersBatchParams {
   sourceId: string;
+  tenantId: string;
   correlationId: string;
   records: readonly CollectorStandardizedRecord[];
 }
@@ -175,6 +176,7 @@ export const createUpsertCustomersBatchClient = ({
 
   return async ({
     sourceId,
+    tenantId,
     correlationId,
     records,
   }: UpsertCustomersBatchParams): Promise<UpsertCustomersBatchResult> => {
@@ -205,6 +207,7 @@ export const createUpsertCustomersBatchClient = ({
           timeoutMs,
           body: JSON.stringify({
             sourceId,
+            tenantId,
             correlationId,
             records,
           }),

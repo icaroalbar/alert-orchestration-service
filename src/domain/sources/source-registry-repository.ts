@@ -7,6 +7,7 @@ export type SourceRegistryRecord = SourceSchemaV1 & {
 };
 
 export interface ListSourceRegistryParams {
+  tenantId: string;
   limit: number;
   nextToken?: string;
   active?: boolean;

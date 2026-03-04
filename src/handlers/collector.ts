@@ -13,6 +13,10 @@ import {
   type CollectorCursorRepository,
   type CollectorCursorValue,
 } from '../domain/collector/collector-cursor-repository';
+import type {
+  CollectorIdempotencyRepository,
+  CollectorIdempotencyScope,
+} from '../domain/collector/collector-idempotency-repository';
 import {
   loadCollectorSourceCredentials,
   type CollectorSecretRepository,
@@ -37,6 +41,7 @@ import {
 import { createMySqlQueryExecutorFactory } from '../infra/collector/mysql-query-executor';
 import { createPostgresQueryExecutorFactory } from '../infra/collector/postgres-query-executor';
 import { createDynamoDbCollectorCursorRepository } from '../infra/cursors/dynamodb-collector-cursor-repository';
+import { createDynamoDbCollectorIdempotencyRepository } from '../infra/idempotency/dynamodb-collector-idempotency-repository';
 import { createSecretsManagerSecretRepository } from '../infra/secrets/secrets-manager-secret-repository';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
 import { createSnsCustomerEventsPublisher, type CustomerEventsPublisher } from '../infra/events/sns-customer-events-publisher';
@@ -87,6 +92,9 @@ const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BASE_DELAY_MS_MAX = 5_000;
 const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_DEFAULT = 2;
 const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MIN = 1;
 const OFFICIAL_CUSTOMERS_UPSERT_RETRY_BACKOFF_RATE_MAX = 5;
+const COLLECTOR_IDEMPOTENCY_TTL_SECONDS_DEFAULT = 604_800;
+const COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MIN = 60;
+const COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MAX = 2_592_000;
 
 type PostgresQueryExecutorFactory = (credentials: CollectorSourceCredentials) => PostgresQueryExecutor;
 type MySqlQueryExecutorFactory = (credentials: CollectorSourceCredentials) => MySqlQueryExecutor;
@@ -110,6 +118,8 @@ export interface CollectorResult {
   persistenceRejectedRecords: UpsertCustomersBatchRejectedRecord[];
   upsertAttempts: number;
   eventsPublished: number;
+  deduplicatedUpsertRecords: number;
+  deduplicatedEventRecords: number;
 }
 
 export interface CollectorDependencies {
@@ -125,6 +135,8 @@ export interface CollectorDependencies {
   sleep: (delayMs: number) => Promise<void>;
   upsertCustomersBatchClient: UpsertCustomersBatchClient;
   customerEventsPublisher: CustomerEventsPublisher;
+  idempotencyRepository: CollectorIdempotencyRepository;
+  idempotencyTtlSeconds: number;
   logger: Pick<typeof console, 'info'>;
 }
 
@@ -326,6 +338,15 @@ const resolveOfficialCustomersUpsertRetryBackoffRate = (rawValue: string | undef
   return parsed;
 };
 
+const resolveCollectorIdempotencyTtlSeconds = (rawValue: string | undefined): number =>
+  resolveBoundedIntegerFromEnv({
+    rawValue,
+    envName: 'COLLECTOR_IDEMPOTENCY_TTL_SECONDS',
+    min: COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MIN,
+    max: COLLECTOR_IDEMPOTENCY_TTL_SECONDS_MAX,
+    fallback: COLLECTOR_IDEMPOTENCY_TTL_SECONDS_DEFAULT,
+  });
+
 const resolveCursorValue = (
   eventCursor: CollectorEvent['cursor'],
   persistedCursor: CollectorCursorValue | undefined,
@@ -515,6 +536,28 @@ const createFetchUpsertCustomersBatchHttpClient = (): UpsertCustomersBatchHttpCl
   };
 };
 
+const normalizeRecordId = (record: CollectorStandardizedRecord): string => {
+  if (record.id === undefined || record.id === null) {
+    return '';
+  }
+
+  return String(record.id).trim();
+};
+
+const normalizeCursorToken = (cursor: CollectorCursorValue): string => String(cursor).trim();
+
+const buildDeduplicationKey = ({
+  scope,
+  sourceId,
+  recordId,
+  cursorToken,
+}: {
+  scope: CollectorIdempotencyScope;
+  sourceId: string;
+  recordId: string;
+  cursorToken: string;
+}): string => `${scope}:${sourceId}:${cursorToken}:${recordId}`;
+
 const getDefaultDependencies = (): CollectorDependencies => {
   if (cachedDefaultDependencies) {
     return cachedDefaultDependencies;
@@ -538,6 +581,11 @@ const getDefaultDependencies = (): CollectorDependencies => {
   const customerEventsTopicArn = process.env.CLIENT_EVENTS_TOPIC_ARN;
   if (!customerEventsTopicArn || customerEventsTopicArn.trim().length === 0) {
     throw new Error('CLIENT_EVENTS_TOPIC_ARN is required.');
+  }
+
+  const idempotencyTableName = process.env.IDEMPOTENCY_TABLE_NAME;
+  if (!idempotencyTableName || idempotencyTableName.trim().length === 0) {
+    throw new Error('IDEMPOTENCY_TABLE_NAME is required.');
   }
 
   cachedDefaultDependencies = {
@@ -597,6 +645,12 @@ const getDefaultDependencies = (): CollectorDependencies => {
     customerEventsPublisher: createSnsCustomerEventsPublisher({
       topicArn: customerEventsTopicArn,
     }),
+    idempotencyRepository: createDynamoDbCollectorIdempotencyRepository({
+      tableName: idempotencyTableName,
+    }),
+    idempotencyTtlSeconds: resolveCollectorIdempotencyTtlSeconds(
+      process.env.COLLECTOR_IDEMPOTENCY_TTL_SECONDS,
+    ),
     logger: console,
   };
 
@@ -617,6 +671,8 @@ export const createHandler =
     sleep,
     upsertCustomersBatchClient,
     customerEventsPublisher,
+    idempotencyRepository,
+    idempotencyTtlSeconds,
     logger,
   }: CollectorDependencies) =>
   async (event: CollectorEvent): Promise<CollectorResult> => {
@@ -723,10 +779,68 @@ export const createHandler =
       event?.meta?.executionId?.trim() ??
       `${sourceId}-${event?.meta?.stage ?? 'unknown'}-${sourceConfiguration.cursorField}`;
 
+    const cursorToken = normalizeCursorToken(cursor);
+    const claimCreatedAt = now();
+    const claimExpiration = Math.floor(nowMs() / 1000) + idempotencyTtlSeconds;
+
+    const nonDuplicatedUpsertRecords: CollectorStandardizedRecord[] = [];
+    const duplicatedUpsertRecords: CollectorStandardizedRecord[] = [];
+    for (const record of canonicalValidationResult.validRecords) {
+      const recordId = normalizeRecordId(record);
+      if (recordId.length === 0) {
+        duplicatedUpsertRecords.push(record);
+        continue;
+      }
+
+      const claimed = await idempotencyRepository.tryClaim({
+        deduplicationKey: buildDeduplicationKey({
+          scope: 'upsert',
+          sourceId,
+          recordId,
+          cursorToken,
+        }),
+        scope: 'upsert',
+        sourceId,
+        recordId,
+        cursor: cursorToken,
+        correlationId,
+        createdAt: claimCreatedAt,
+        expiresAtEpochSeconds: claimExpiration,
+      });
+
+      if (claimed) {
+        nonDuplicatedUpsertRecords.push(record);
+      } else {
+        duplicatedUpsertRecords.push(record);
+      }
+    }
+    if (duplicatedUpsertRecords.length > 0) {
+      logger.info('collector.idempotency.upsert_deduplicated', {
+        sourceId,
+        correlationId,
+        deduplicatedCount: duplicatedUpsertRecords.length,
+      });
+      logger.info('collector.idempotency.metric', {
+        _aws: {
+          Timestamp: nowMs(),
+          CloudWatchMetrics: [
+            {
+              Namespace: 'AlertOrchestrationService/Collector',
+              Dimensions: [['Stage', 'Scope']],
+              Metrics: [{ Name: 'DeduplicatedRecords', Unit: 'Count' }],
+            },
+          ],
+        },
+        Stage: event?.meta?.stage ?? process.env.STAGE ?? 'unknown',
+        Scope: 'upsert',
+        DeduplicatedRecords: duplicatedUpsertRecords.length,
+      });
+    }
+
     const upsertResult = await upsertCustomersBatchClient({
       sourceId,
       correlationId,
-      records: canonicalValidationResult.validRecords,
+      records: nonDuplicatedUpsertRecords,
     });
     if (upsertResult.rejectedRecords.length > 0) {
       logger.info('collector.official_api.partial_rejection', {
@@ -738,10 +852,64 @@ export const createHandler =
     }
 
     const processedAt = now();
+    const nonDuplicatedEventRecords: CollectorStandardizedRecord[] = [];
+    const duplicatedEventRecords: CollectorStandardizedRecord[] = [];
+    for (const record of upsertResult.persistedRecords) {
+      const recordId = normalizeRecordId(record);
+      if (recordId.length === 0) {
+        duplicatedEventRecords.push(record);
+        continue;
+      }
+
+      const claimed = await idempotencyRepository.tryClaim({
+        deduplicationKey: buildDeduplicationKey({
+          scope: 'event',
+          sourceId,
+          recordId,
+          cursorToken,
+        }),
+        scope: 'event',
+        sourceId,
+        recordId,
+        cursor: cursorToken,
+        correlationId,
+        createdAt: claimCreatedAt,
+        expiresAtEpochSeconds: claimExpiration,
+      });
+
+      if (claimed) {
+        nonDuplicatedEventRecords.push(record);
+      } else {
+        duplicatedEventRecords.push(record);
+      }
+    }
+    if (duplicatedEventRecords.length > 0) {
+      logger.info('collector.idempotency.event_deduplicated', {
+        sourceId,
+        correlationId,
+        deduplicatedCount: duplicatedEventRecords.length,
+      });
+      logger.info('collector.idempotency.metric', {
+        _aws: {
+          Timestamp: nowMs(),
+          CloudWatchMetrics: [
+            {
+              Namespace: 'AlertOrchestrationService/Collector',
+              Dimensions: [['Stage', 'Scope']],
+              Metrics: [{ Name: 'DeduplicatedRecords', Unit: 'Count' }],
+            },
+          ],
+        },
+        Stage: event?.meta?.stage ?? process.env.STAGE ?? 'unknown',
+        Scope: 'event',
+        DeduplicatedRecords: duplicatedEventRecords.length,
+      });
+    }
+
     const publishResult = await customerEventsPublisher({
       sourceId,
       correlationId,
-      records: upsertResult.persistedRecords,
+      records: nonDuplicatedEventRecords,
       publishedAt: processedAt,
     });
     if (publishResult.publishedCount > 0) {
@@ -785,6 +953,8 @@ export const createHandler =
       persistenceRejectedRecords: upsertResult.rejectedRecords,
       upsertAttempts: upsertResult.attempts,
       eventsPublished: publishResult.publishedCount,
+      deduplicatedUpsertRecords: duplicatedUpsertRecords.length,
+      deduplicatedEventRecords: duplicatedEventRecords.length,
     };
   };
 

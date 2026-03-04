@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
+import type { CollectorIdempotencyClaim } from '../../../src/domain/collector/collector-idempotency-repository';
 import type { CollectorCursorValue } from '../../../src/domain/collector/collector-cursor-repository';
 import type { CollectorStandardizedRecord } from '../../../src/domain/collector/collect-postgres-records';
 import type { MySqlQueryExecutor } from '../../../src/domain/collector/collect-mysql-records';
@@ -233,6 +234,26 @@ class SpyCustomerEventsPublisher {
   };
 }
 
+class SpyCollectorIdempotencyRepository {
+  public readonly tryClaimCalls: CollectorIdempotencyClaim[] = [];
+  private readonly claimedKeys = new Set<string>();
+
+  constructor(private readonly forcedDuplicateKeys: Set<string> = new Set()) {}
+
+  tryClaim = (claim: CollectorIdempotencyClaim): Promise<boolean> => {
+    this.tryClaimCalls.push(claim);
+    if (
+      this.forcedDuplicateKeys.has(claim.deduplicationKey) ||
+      this.claimedKeys.has(claim.deduplicationKey)
+    ) {
+      return Promise.resolve(false);
+    }
+
+    this.claimedKeys.add(claim.deduplicationKey);
+    return Promise.resolve(true);
+  };
+}
+
 const DEFAULT_SECRET_RETRY_POLICY: CollectorSecretRetryPolicy = {
   maxAttempts: 3,
   baseDelayMs: 10,
@@ -247,6 +268,7 @@ const createCollectorHandler = ({
   mySqlQueryExecutorFactory = new SpyMySqlQueryExecutorFactory([]),
   upsertCustomersBatchClient = new SpyUpsertCustomersBatchClient(),
   customerEventsPublisher = new SpyCustomerEventsPublisher(),
+  idempotencyRepository = new SpyCollectorIdempotencyRepository(),
   logger,
 }: {
   sourceRegistryRepository: SpySourceRegistryRepository;
@@ -256,6 +278,7 @@ const createCollectorHandler = ({
   mySqlQueryExecutorFactory?: SpyMySqlQueryExecutorFactory;
   upsertCustomersBatchClient?: SpyUpsertCustomersBatchClient;
   customerEventsPublisher?: SpyCustomerEventsPublisher;
+  idempotencyRepository?: SpyCollectorIdempotencyRepository;
   logger?: SpyLogger;
 }) => {
   let nowMsCalls = 0;
@@ -275,6 +298,8 @@ const createCollectorHandler = ({
     sleep: () => Promise.resolve(),
     upsertCustomersBatchClient: upsertCustomersBatchClient.invoke,
     customerEventsPublisher: customerEventsPublisher.publish,
+    idempotencyRepository,
+    idempotencyTtlSeconds: 3600,
     logger: logger ?? new SpyLogger(),
   };
 
@@ -344,6 +369,8 @@ describe('collector handler', () => {
     expect(result.persistenceRejectedRecords).toEqual([]);
     expect(result.upsertAttempts).toBe(1);
     expect(result.eventsPublished).toBe(2);
+    expect(result.deduplicatedUpsertRecords).toBe(0);
+    expect(result.deduplicatedEventRecords).toBe(0);
     expect(result.records).toEqual([
       {
         id: 10,
@@ -462,6 +489,8 @@ describe('collector handler', () => {
     expect(result.persistenceRejectedRecords).toEqual([]);
     expect(result.upsertAttempts).toBe(1);
     expect(result.eventsPublished).toBe(1);
+    expect(result.deduplicatedUpsertRecords).toBe(0);
+    expect(result.deduplicatedEventRecords).toBe(0);
     expect(result.records).toEqual([
       {
         id: 99,
@@ -645,6 +674,8 @@ describe('collector handler', () => {
     expect(result.persistenceRejectedRecords).toEqual([]);
     expect(result.upsertAttempts).toBe(1);
     expect(result.eventsPublished).toBe(1);
+    expect(result.deduplicatedUpsertRecords).toBe(0);
+    expect(result.deduplicatedEventRecords).toBe(0);
     expect(result.rejectedRecords).toEqual([
       {
         index: 1,
@@ -739,6 +770,8 @@ describe('collector handler', () => {
     ]);
     expect(result.upsertAttempts).toBe(2);
     expect(result.eventsPublished).toBe(1);
+    expect(result.deduplicatedUpsertRecords).toBe(0);
+    expect(result.deduplicatedEventRecords).toBe(0);
     expect(upsertClient.calls).toEqual([
       {
         sourceId: VALID_SOURCE.sourceId,
@@ -749,6 +782,90 @@ describe('collector handler', () => {
         ],
       },
     ]);
+  });
+
+  it('deduplicates upsert and publish operations for repeated records in the same window', async () => {
+    const repository = new SpySourceRegistryRepository(
+      new Map<string, SourceRegistryRecord>([[VALID_SOURCE.sourceId, VALID_SOURCE]]),
+    );
+    const secrets = new SpySecretRepository(
+      new Map<string, string | null>([
+        [
+          VALID_SOURCE.secretArn,
+          JSON.stringify({
+            host: 'db.internal',
+            port: 5432,
+            database: 'crm',
+            username: 'collector_user',
+            password: 'collector_password',
+          }),
+        ],
+      ]),
+    );
+    const postgresFactory = new SpyPostgresQueryExecutorFactory([
+      {
+        customer_id: 10,
+        email: 'first@example.com',
+        updated_at: new Date('2026-03-04T10:10:00.000Z'),
+      },
+      {
+        customer_id: 11,
+        email: 'second@example.com',
+        updated_at: new Date('2026-03-04T10:20:00.000Z'),
+      },
+    ]);
+    const cursorToken = '2026-03-01T00:00:00.000Z';
+    const forcedDuplicateKeys = new Set<string>([
+      `upsert:${VALID_SOURCE.sourceId}:${cursorToken}:11`,
+      `event:${VALID_SOURCE.sourceId}:${cursorToken}:10`,
+    ]);
+    const idempotencyRepository = new SpyCollectorIdempotencyRepository(forcedDuplicateKeys);
+    const upsertClient = new SpyUpsertCustomersBatchClient();
+    const eventsPublisher = new SpyCustomerEventsPublisher();
+    const logger = new SpyLogger();
+
+    const handler = createCollectorHandler({
+      sourceRegistryRepository: repository,
+      secretRepository: secrets,
+      postgresQueryExecutorFactory: postgresFactory,
+      idempotencyRepository,
+      upsertCustomersBatchClient: upsertClient,
+      customerEventsPublisher: eventsPublisher,
+      logger,
+    });
+
+    const result = await handler({ sourceId: VALID_SOURCE.sourceId, meta: { stage: 'dev' } });
+
+    expect(result.recordsSent).toBe(1);
+    expect(result.records).toEqual([{ id: 10, email: 'first@example.com' }]);
+    expect(result.eventsPublished).toBe(0);
+    expect(result.deduplicatedUpsertRecords).toBe(1);
+    expect(result.deduplicatedEventRecords).toBe(1);
+    expect(upsertClient.calls).toEqual([
+      {
+        sourceId: VALID_SOURCE.sourceId,
+        correlationId: `${VALID_SOURCE.sourceId}-dev-${VALID_SOURCE.cursorField}`,
+        records: [{ id: 10, email: 'first@example.com' }],
+      },
+    ]);
+    expect(eventsPublisher.calls).toEqual([
+      {
+        sourceId: VALID_SOURCE.sourceId,
+        correlationId: `${VALID_SOURCE.sourceId}-dev-${VALID_SOURCE.cursorField}`,
+        records: [],
+        publishedAt: '2026-03-04T11:00:00.000Z',
+      },
+    ]);
+    expect(
+      logger.infoCalls.some(
+        ([eventName]) => eventName === 'collector.idempotency.upsert_deduplicated',
+      ),
+    ).toBe(true);
+    expect(
+      logger.infoCalls.some(
+        ([eventName]) => eventName === 'collector.idempotency.event_deduplicated',
+      ),
+    ).toBe(true);
   });
 
   it('fails with traceable error when required field mapping is missing', async () => {

@@ -247,10 +247,10 @@ export const createHandler =
         }
 
         if (
-          isRecord(parsedBody.value) &&
-          typeof parsedBody.value.tenantId === 'string' &&
-          parsedBody.value.tenantId.trim().length > 0 &&
-          parsedBody.value.tenantId.trim() !== tenantId
+          payloadRecord &&
+          typeof payloadRecord.tenantId === 'string' &&
+          payloadRecord.tenantId.trim().length > 0 &&
+          payloadRecord.tenantId.trim() !== tenantId
         ) {
           logger.info('api.sources.create.rejected', {
             correlationId,
@@ -263,9 +263,9 @@ export const createHandler =
           });
         }
 
-        const payloadForValidation = isRecord(payloadValue)
+        const payloadForValidation = payloadRecord
           ? {
-              ...payloadValue,
+              ...payloadRecord,
               tenantId,
               ...(finalSecretArn ? { secretArn: finalSecretArn } : {}),
             }

@@ -184,11 +184,11 @@ describe('create-source handler', () => {
     process.env.SECRETS_ALLOWED_REGION = 'us-east-1';
     process.env.SECRETS_ALLOWED_ACCOUNT_ID = '123456789012';
 
-      try {
-        const repository = new SpySourceRegistryRepository();
-        const { handler } = makeHandlerWithDependencies({ repository });
+    try {
+      const repository = new SpySourceRegistryRepository();
+      const { handler } = makeHandlerWithDependencies({ repository });
 
-        const result = await handler({
+      const result = await handler({
         body: JSON.stringify({
           ...VALID_INTERVAL_SOURCE,
           secretArn: 'arn:aws:secretsmanager:us-west-2:123456789012:secret:acme/source-db',

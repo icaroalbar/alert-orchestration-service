@@ -1,10 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 
+import type { SourceConnectionDetails } from '../../../src/domain/sources/source-connection-details';
 import {
   SourceAlreadyExistsError,
   type SourceRegistryRecord,
   type SourceRegistryRepository,
 } from '../../../src/domain/sources/source-registry-repository';
+import type { SourceSecretCreator } from '../../../src/infra/secrets/source-secret-creator';
 import { createHandler } from '../../../src/handlers/create-source';
 
 const VALID_INTERVAL_SOURCE = {
@@ -64,13 +66,51 @@ class SpySourceRegistryRepository implements SourceRegistryRepository {
   }
 }
 
-describe('create-source handler', () => {
-  it('creates source and returns 201 with metadata', async () => {
-    const repository = new SpySourceRegistryRepository();
-    const handler = createHandler({
+class SpySourceSecretCreator implements SourceSecretCreator {
+  public readonly calls: Array<{
+    sourceId: string;
+    connectionDetails: SourceConnectionDetails;
+  }> = [];
+
+  constructor(private readonly arn = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:generated') {}
+
+  createSecret(params: {
+    sourceId: string;
+    connectionDetails: SourceConnectionDetails;
+  }): Promise<string> {
+    this.calls.push(params);
+    return Promise.resolve(this.arn);
+  }
+}
+
+class FailingSourceSecretCreator implements SourceSecretCreator {
+  createSecret(): Promise<string> {
+    return Promise.reject(new Error('secrets fail'));
+  }
+}
+
+const makeHandlerWithDependencies = (options?: {
+  repository?: SpySourceRegistryRepository;
+  secretCreator?: SourceSecretCreator;
+}) => {
+  const repository = options?.repository ?? new SpySourceRegistryRepository();
+  const secretCreator = options?.secretCreator ?? new SpySourceSecretCreator();
+
+  return {
+    handler: createHandler({
       sourceRegistryRepository: repository,
       now: () => '2026-03-03T12:00:00.000Z',
-    });
+      sourceSecretCreator: secretCreator,
+    }),
+    repository,
+    secretCreator,
+  };
+};
+
+describe('create-source handler', () => {
+  it('creates source and returns 201 with metadata', async () => {
+    const secretCreator = new SpySourceSecretCreator();
+    const { handler, repository } = makeHandlerWithDependencies({ secretCreator });
 
     const result = await handler({
       body: JSON.stringify(VALID_INTERVAL_SOURCE),
@@ -97,14 +137,11 @@ describe('create-source handler', () => {
       createdAt: '2026-03-03T12:00:00.000Z',
       updatedAt: '2026-03-03T12:00:00.000Z',
     });
+    expect(secretCreator.calls).toHaveLength(0);
   });
 
   it('calculates nextRunAt for cron schedules in UTC', async () => {
-    const repository = new SpySourceRegistryRepository();
-    const handler = createHandler({
-      sourceRegistryRepository: repository,
-      now: () => '2026-03-03T12:00:00.000Z',
-    });
+    const { handler, repository } = makeHandlerWithDependencies();
 
     const result = await handler({
       body: JSON.stringify({
@@ -121,11 +158,7 @@ describe('create-source handler', () => {
   });
 
   it('returns 400 when payload validation fails', async () => {
-    const repository = new SpySourceRegistryRepository();
-    const handler = createHandler({
-      sourceRegistryRepository: repository,
-      now: () => '2026-03-03T12:00:00.000Z',
-    });
+    const { handler, repository } = makeHandlerWithDependencies();
 
     const result = await handler({
       body: JSON.stringify({
@@ -153,10 +186,7 @@ describe('create-source handler', () => {
 
     try {
       const repository = new SpySourceRegistryRepository();
-      const handler = createHandler({
-        sourceRegistryRepository: repository,
-        now: () => '2026-03-03T12:00:00.000Z',
-      });
+      const { handler } = makeHandlerWithDependencies({ repository });
 
       const result = await handler({
         body: JSON.stringify({
@@ -189,10 +219,7 @@ describe('create-source handler', () => {
   });
 
   it('returns 400 when body is invalid json', async () => {
-    const handler = createHandler({
-      sourceRegistryRepository: new SpySourceRegistryRepository(),
-      now: () => '2026-03-03T12:00:00.000Z',
-    });
+    const { handler } = makeHandlerWithDependencies();
 
     const result = await handler({
       body: '{invalid-json',
@@ -205,12 +232,10 @@ describe('create-source handler', () => {
   });
 
   it('returns 409 when source already exists', async () => {
-    const handler = createHandler({
-      sourceRegistryRepository: new SpySourceRegistryRepository(
-        new SourceAlreadyExistsError('source-acme'),
-      ),
-      now: () => '2026-03-03T12:00:00.000Z',
-    });
+    const repository = new SpySourceRegistryRepository(
+      new SourceAlreadyExistsError('source-acme'),
+    );
+    const { handler } = makeHandlerWithDependencies({ repository });
 
     const result = await handler({
       body: JSON.stringify(VALID_INTERVAL_SOURCE),
@@ -225,10 +250,8 @@ describe('create-source handler', () => {
   });
 
   it('returns 500 for unexpected repository errors', async () => {
-    const handler = createHandler({
-      sourceRegistryRepository: new SpySourceRegistryRepository(new Error('network timeout')),
-      now: () => '2026-03-03T12:00:00.000Z',
-    });
+    const repository = new SpySourceRegistryRepository(new Error('network timeout'));
+    const { handler } = makeHandlerWithDependencies({ repository });
 
     const result = await handler({
       body: JSON.stringify(VALID_INTERVAL_SOURCE),
@@ -242,10 +265,7 @@ describe('create-source handler', () => {
   });
 
   it('returns 400 when cron expression is invalid', async () => {
-    const handler = createHandler({
-      sourceRegistryRepository: new SpySourceRegistryRepository(),
-      now: () => '2026-03-03T12:00:00.000Z',
-    });
+    const { handler } = makeHandlerWithDependencies();
 
     const result = await handler({
       body: JSON.stringify({
@@ -269,5 +289,109 @@ describe('create-source handler', () => {
         code: 'INVALID_FORMAT',
       }),
     );
+  });
+
+  it('creates secret when connectionDetails are provided instead of secretArn', async () => {
+    const stubArn = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:generated-conn';
+    const secretCreator = new SpySourceSecretCreator(stubArn);
+    const { handler, repository } = makeHandlerWithDependencies({ secretCreator });
+
+    const payload = {
+      ...VALID_INTERVAL_SOURCE,
+      secretArn: undefined,
+      connectionDetails: {
+        host: 'source-db.internal',
+        database: 'customers',
+        username: 'collector',
+        password: 'super-secret',
+        port: 5432,
+      },
+    };
+
+    const result = await handler({
+      body: JSON.stringify(payload),
+      requestContext: tenantRequestContext(),
+    });
+
+    expect(result.statusCode).toBe(201);
+    expect(repository.created[0].secretArn).toBe(stubArn);
+    expect(secretCreator.calls).toHaveLength(1);
+    expect(secretCreator.calls[0]).toMatchObject({
+      sourceId: 'source-acme',
+      connectionDetails: {
+        host: 'source-db.internal',
+        database: 'customers',
+        username: 'collector',
+        password: 'super-secret',
+        port: 5432,
+      },
+    });
+  });
+
+  it('returns 400 when neither secretArn nor connectionDetails are sent', async () => {
+    const { handler } = makeHandlerWithDependencies();
+
+    const payload = {
+      ...VALID_INTERVAL_SOURCE,
+      secretArn: undefined,
+    };
+
+    const result = await handler({
+      body: JSON.stringify(payload),
+      requestContext: tenantRequestContext(),
+    });
+
+    expect(result.statusCode).toBe(400);
+    const parsed = JSON.parse(result.body) as { errors: Array<{ field: string }> };
+    expect(parsed.errors.some((error) => error.field === 'secretArn')).toBe(true);
+  });
+
+  it('returns 400 when connectionDetails payload is invalid', async () => {
+    const { handler } = makeHandlerWithDependencies();
+
+    const payload = {
+      ...VALID_INTERVAL_SOURCE,
+      secretArn: undefined,
+      connectionDetails: {
+        host: '',
+        database: 'customers',
+        username: 'collector',
+        password: 'secret',
+      },
+    };
+
+    const result = await handler({
+      body: JSON.stringify(payload),
+      requestContext: tenantRequestContext(),
+    });
+
+    expect(result.statusCode).toBe(400);
+    const parsed = JSON.parse(result.body) as { errors: Array<{ field: string }> };
+    expect(parsed.errors.some((error) => error.field === 'connectionDetails.host')).toBe(true);
+  });
+
+  it('returns 500 when secret creation fails', async () => {
+    const { handler } = makeHandlerWithDependencies({
+      secretCreator: new FailingSourceSecretCreator(),
+    });
+
+    const payload = {
+      ...VALID_INTERVAL_SOURCE,
+      secretArn: undefined,
+      connectionDetails: {
+        host: 'source-db.internal',
+        database: 'customers',
+        username: 'collector',
+        password: 'super-secret',
+      },
+    };
+
+    const result = await handler({
+      body: JSON.stringify(payload),
+      requestContext: tenantRequestContext(),
+    });
+
+    expect(result.statusCode).toBe(500);
+    expect(JSON.parse(result.body)).toEqual({ message: 'Failed to create source secret.' });
   });
 });

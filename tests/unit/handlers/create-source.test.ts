@@ -74,18 +74,18 @@ class SpySourceSecretCreator implements SourceSecretCreator {
 
   constructor(private readonly arn = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:generated') {}
 
-  async createSecret(params: {
+  createSecret(params: {
     sourceId: string;
     connectionDetails: SourceConnectionDetails;
   }): Promise<string> {
     this.calls.push(params);
-    return this.arn;
+    return Promise.resolve(this.arn);
   }
 }
 
 class FailingSourceSecretCreator implements SourceSecretCreator {
-  async createSecret(): Promise<string> {
-    throw new Error('secrets fail');
+  createSecret(): Promise<string> {
+    return Promise.reject(new Error('secrets fail'));
   }
 }
 

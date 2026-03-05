@@ -17,11 +17,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
-const isValidPort = (value: unknown): boolean =>
-  (typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= MAX_PORT) ||
-  (typeof value === 'string' && /^\d+$/.test(value) && Number.parseInt(value, 10) > 0 &&
-    Number.parseInt(value, 10) <= MAX_PORT);
-
 const normalizePort = (value: unknown): number | undefined => {
   if (typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= MAX_PORT) {
     return value;

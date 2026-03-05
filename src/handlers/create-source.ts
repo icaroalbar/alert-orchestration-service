@@ -10,10 +10,7 @@ import {
   type SourceRegistryRepository,
 } from '../domain/sources/source-registry-repository';
 import { calculateNextRunAt } from '../domain/sources/next-run-at';
-import {
-  SourceConnectionDetails,
-  validateSourceConnectionDetails,
-} from '../domain/sources/source-connection-details';
+import { validateSourceConnectionDetails } from '../domain/sources/source-connection-details';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
 import { createAwsSourceSecretCreator, type SourceSecretCreator } from '../infra/secrets/source-secret-creator';
 import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
@@ -220,7 +217,7 @@ export const createHandler =
                       sourceId: normalizedSourceId,
                       connectionDetails: connectionValidation.value,
                     });
-                  } catch (error) {
+                  } catch {
                     logger.info('api.sources.create.failed', {
                       correlationId,
                       statusCode: 500,

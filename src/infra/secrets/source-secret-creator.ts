@@ -36,7 +36,7 @@ const sanitizeId = (value: string): string =>
   value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9._+=@\-]/g, '-')
+    .replace(/[^a-z0-9._+=@-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-+/, '')
     .replace(/-+$/, '') ||

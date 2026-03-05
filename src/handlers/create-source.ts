@@ -3,13 +3,16 @@ import {
   validateSourceCreatePayload,
 } from '../domain/sources/source-payload-validation';
 import { SOURCE_SCHEMA_VERSION } from '../domain/sources/source-schema';
+import type { SourceSchemaValidationError } from '../domain/sources/source-schema';
 import {
   SourceAlreadyExistsError,
   type SourceRegistryRecord,
   type SourceRegistryRepository,
 } from '../domain/sources/source-registry-repository';
 import { calculateNextRunAt } from '../domain/sources/next-run-at';
+import { validateSourceConnectionDetails } from '../domain/sources/source-connection-details';
 import { createDynamoDbSourceRegistryRepository } from '../infra/sources/dynamodb-source-registry-repository';
+import { createAwsSourceSecretCreator, type SourceSecretCreator } from '../infra/secrets/source-secret-creator';
 import { resolveTenantIdFromJwtClaims } from '../shared/auth/tenant-context';
 import { resolveCorrelationId } from '../shared/logging/correlation-id';
 import { createStructuredLogger } from '../shared/logging/structured-logger';
@@ -50,6 +53,7 @@ export interface CreateSourceResponse {
 export interface CreateSourceDependencies {
   sourceRegistryRepository: SourceRegistryRepository;
   now: () => string;
+  sourceSecretCreator: SourceSecretCreator;
 }
 
 let cachedDefaultDependencies: CreateSourceDependencies | undefined;
@@ -62,6 +66,32 @@ const response = (statusCode: number, payload: unknown): CreateSourceResponse =>
   headers: JSON_HEADERS,
   body: JSON.stringify(payload),
 });
+
+const buildMissingSecretError = (): SourceSchemaValidationError[] => [
+  {
+    field: 'secretArn',
+    code: 'REQUIRED',
+    message: 'secretArn or connectionDetails must be provided.',
+  },
+];
+
+const buildSourceIdError = (): SourceSchemaValidationError[] => [
+  {
+    field: 'sourceId',
+    code: 'REQUIRED',
+    message: 'sourceId is required when creating a secret.',
+  },
+];
+
+const extractSourceId = (payload: Record<string, unknown>): string | undefined => {
+  const value = payload.sourceId;
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
 
 const parseBody = (
   rawBody: string | null | undefined,
@@ -106,13 +136,14 @@ const getDefaultDependencies = (): CreateSourceDependencies => {
   cachedDefaultDependencies = {
     sourceRegistryRepository: createDynamoDbSourceRegistryRepository({ tableName }),
     now: nowIso,
+    sourceSecretCreator: createAwsSourceSecretCreator(),
   };
 
   return cachedDefaultDependencies;
 };
 
 export const createHandler =
-  ({ sourceRegistryRepository, now }: CreateSourceDependencies) =>
+  ({ sourceRegistryRepository, now, sourceSecretCreator }: CreateSourceDependencies) =>
   async (event: CreateSourceEvent): Promise<CreateSourceResponse> => {
     const correlationId = resolveCorrelationId({
       headers: event.headers,
@@ -158,6 +189,63 @@ export const createHandler =
 
         span.setAttribute('tenantId', tenantId);
 
+        const payloadValue = parsedBody.value;
+        const payloadRecord = isRecord(payloadValue) ? payloadValue : null;
+
+        let finalSecretArn: string | undefined;
+        let connectionErrors: SourceSchemaValidationError[] | undefined;
+
+        if (payloadRecord) {
+          const rawSecretArn = payloadRecord.secretArn;
+          const trimmedSecretArn = typeof rawSecretArn === 'string' ? rawSecretArn.trim() : undefined;
+          finalSecretArn = trimmedSecretArn;
+
+          if (!finalSecretArn) {
+            if (!('connectionDetails' in payloadRecord)) {
+              connectionErrors = buildMissingSecretError();
+            } else {
+              const connectionValidation = validateSourceConnectionDetails(payloadRecord.connectionDetails);
+              if (!connectionValidation.success) {
+                connectionErrors = connectionValidation.errors;
+              } else {
+                const normalizedSourceId = extractSourceId(payloadRecord);
+                if (!normalizedSourceId) {
+                  connectionErrors = buildSourceIdError();
+                } else {
+                  try {
+                    finalSecretArn = await sourceSecretCreator.createSecret({
+                      sourceId: normalizedSourceId,
+                      connectionDetails: connectionValidation.value,
+                    });
+                  } catch {
+                    logger.info('api.sources.create.failed', {
+                      correlationId,
+                      statusCode: 500,
+                      sourceId: normalizedSourceId,
+                      reason: 'secret_creation_failed',
+                    });
+                    return response(500, {
+                      message: 'Failed to create source secret.',
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if (connectionErrors) {
+          logger.info('api.sources.create.rejected', {
+            correlationId,
+            statusCode: 400,
+            reason: 'connection_details_invalid',
+          });
+          return response(400, {
+            message: SOURCE_PAYLOAD_VALIDATION_MESSAGE,
+            errors: connectionErrors,
+          });
+        }
+
         if (
           isRecord(parsedBody.value) &&
           typeof parsedBody.value.tenantId === 'string' &&
@@ -175,12 +263,13 @@ export const createHandler =
           });
         }
 
-        const payloadForValidation = isRecord(parsedBody.value)
+        const payloadForValidation = isRecord(payloadValue)
           ? {
-              ...parsedBody.value,
+              ...payloadValue,
               tenantId,
+              ...(finalSecretArn ? { secretArn: finalSecretArn } : {}),
             }
-          : parsedBody.value;
+          : payloadValue;
         const validation = validateSourceCreatePayload(payloadForValidation);
         if (!validation.success) {
           logger.info('api.sources.create.rejected', {

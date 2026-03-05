@@ -8,7 +8,7 @@ Endpoint para cadastro de novas fontes no plugin registry.
 - Path: `/sources`
 - Header obrigatório: `Authorization: Bearer <jwt>`
 - Scope obrigatório: `sources:write`
-- Body: contrato de criação baseado em `SourceSchemaV1` (ver `docs/sources/source-schema-v1.md`), com `nextRunAt` calculado automaticamente no backend.
+- Body: contrato de criação baseado em `SourceSchemaV1` (ver `docs/sources/source-schema-v1.md`), com `nextRunAt` calculado automaticamente no backend. O `secretArn` pode ficar ausente quando o payload incluir o bloco `connectionDetails`, permitindo que a API crie o segredo diretamente no Secrets Manager.
 
 ## Responses
 

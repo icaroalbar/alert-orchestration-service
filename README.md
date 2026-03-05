@@ -229,6 +229,7 @@ O `serverless.yml` usa configuração explícita por stage e naming strategy par
   - Escopos mínimos por operação:
     - `GET /sources` requer `sources:read`.
     - `POST /sources`, `PATCH /sources/{id}`, `DELETE /sources/{id}` requerem `sources:write`.
+  - `POST /sources` aceita o bloco `connectionDetails` em vez de `secretArn`, permitindo que o backend crie o segredo automaticamente.
   - Contrato de erro de auth no gateway:
     - `401` para token ausente/inválido.
     - `403` para token sem escopo exigido.
